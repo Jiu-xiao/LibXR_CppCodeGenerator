@@ -135,6 +135,14 @@ libxr_generate_stm32_cmake [-h] input_dir
 
 ---
 
+### .IOC file requirements
+
+* **STM32CubeMX**: The `.ioc` file must be generated using STM32CubeMX.
+* **CMake**: The project must be built using CMake.
+* **DMA**: UART, SPI and I2C must have DMA enabled.
+
+---
+
 ## 🛠️ Contributing
 
 We welcome community contributions! See our [contribution guidelines](CONTRIBUTING.md) for details.

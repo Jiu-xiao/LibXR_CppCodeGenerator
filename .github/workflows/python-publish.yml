@@ -2,11 +2,13 @@ name: CI/CD - Python Package
 
 on:
   push:
-    branches:
-      - main
+    paths:
+      - "**.py"
+      - "**.toml"
   pull_request:
-    branches:
-      - main
+    paths:
+      - "**.py"
+      - "**.toml"
   release:
     types:
       - published
