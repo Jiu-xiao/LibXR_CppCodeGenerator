@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "libxr"
+version = "0.1.0"
+description = "A Python package for parsing ioc files and generating C++ code."
+authors = [{name = "Your Name", email = "your.email@example.com"}]
+readme = "README.md"
+license = {text = "MIT"}
+keywords = ["code generation", "embedded systems", "automation"]
+dependencies = [
+    "argparse",
+]
+
+[project.scripts]
+libxr_parse_ioc = "libxr.PeripheralAnalyzer:main"
+libxr_generate_code = "libxr.GeneratorCode:main"
+libxr_generate_stm32_it = "libxr.GeneratorSTM32IT:main"
+libxr_generate_stm32_cmake = "libxr.GeneratorSTM32CMake:main"
+libxr_config_cubemx_project = "libxr.ConfigCubemxProject:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
