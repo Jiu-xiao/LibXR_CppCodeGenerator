@@ -31,7 +31,7 @@ jobs:
 
     - name: Install Python Package
       run: |
-        python install -e .
+        pip install -e .
 
     - name: Get Test Project
       uses: actions/checkout@v4
