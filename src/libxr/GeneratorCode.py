@@ -18,6 +18,7 @@ libxr_config = {
     "FDCAN": {},
 }
 
+
 def load_json(file_path):
     """Load JSON configuration file."""
     with open(file_path, "r", encoding="utf-8") as f:
@@ -29,28 +30,26 @@ def gpio_alias(port, gpio_data):
     label = gpio_data.get("Label")  # Could be empty
     is_exti = gpio_data.get("GPXTI", False)  # Whether it's an EXTI interrupt pin
 
+    # **No alias** → Directly use GPIOx, GPIO_PIN_x
+    parts = port.split("-")
+    port_define = f"GPIO{parts[0][1]}"  # E.g., "PA4" → "GPIOA"
+    pin_define = f"GPIO_PIN_{parts[0][2:]}"  # E.g., "PA4" → "GPIO_PIN_4"
+
     if label:
-        # **Alias exists** → Use CubeMX predefined macros
         pin_define = f"{label}_Pin"
         port_define = f"{label}_GPIO_Port"
-        irq_define = f"{label}_EXTI_IRQn" if is_exti else None
-    else:
-        # **No alias** → Directly use GPIOx, GPIO_PIN_x
-        parts = port.split("-")
-        port_define = f"GPIO{parts[0][1]}"  # E.g., "PA4" → "GPIOA"
-        pin_define = f"GPIO_PIN_{parts[0][2:]}"  # E.g., "PA4" → "GPIO_PIN_4"
 
-        # Calculate EXTI_IRQn
-        pin_num = int(parts[0][2:])
-        if is_exti:
-            if 5 <= pin_num <= 9:
-                irq_define = "EXTI9_5_IRQn"
-            elif 10 <= pin_num <= 15:
-                irq_define = "EXTI15_10_IRQn"
-            else:
-                irq_define = f"EXTI{pin_num}_IRQn"
+    # Calculate EXTI_IRQn
+    pin_num = int(parts[0][2:])
+    if is_exti:
+        if 5 <= pin_num <= 9:
+            irq_define = "EXTI9_5_IRQn"
+        elif 10 <= pin_num <= 15:
+            irq_define = "EXTI15_10_IRQn"
         else:
-            irq_define = None
+            irq_define = f"EXTI{pin_num}_IRQn"
+    else:
+        irq_define = None
 
     # **Final formatted output**
     if irq_define:
@@ -72,7 +71,10 @@ def generate_dma_buffers(periph, instance, buffer_sizes):
         if buffer_size is None:
             rx_buffer_size = buffer_sizes[periph]
             tx_buffer_size = buffer_sizes[periph]
-            libxr_config[periph][instance] = {"tx_buffer_size": tx_buffer_size, "rx_buffer_size": rx_buffer_size}
+            libxr_config[periph][instance] = {
+                "tx_buffer_size": tx_buffer_size,
+                "rx_buffer_size": rx_buffer_size,
+            }
         else:
             tx_buffer_size = buffer_size["tx_buffer_size"]
             rx_buffer_size = buffer_size["rx_buffer_size"]
@@ -96,15 +98,15 @@ def generate_dma_buffers(periph, instance, buffer_sizes):
 
 def generate_gpio_config(project_data):
     """Generate GPIO configuration code."""
-    gpio_section = "\n    // GPIO Configuration\n"
+    gpio_section = "\n  /* GPIO Configuration */\n"
     for port, config in project_data["GPIO"].items():
-        gpio_section += f"    LibXR::STM32GPIO {gpio_alias(port, config)};\n"
+        gpio_section += f"  LibXR::STM32GPIO {gpio_alias(port, config)};\n"
     return gpio_section
 
 
 def generate_extern_config(project_data, buffer_sizes):
     """Generate peripheral instantiation code and allocate DMA buffers if needed."""
-    dma_section = "\n// DMA Buffers\n"
+    dma_section = "\n/* DMA Buffers */\n"
     externs = set()
 
     for periph, instances in project_data["Peripherals"].items():
@@ -134,7 +136,7 @@ def generate_extern_config(project_data, buffer_sizes):
 
 def generate_peripherals_config(project_data):
     """Generate peripheral instantiation code and assign DMA buffers."""
-    periph_section = "\n    // Peripheral Configuration\n"
+    periph_section = "\n  /* Peripheral Configuration */\n"
     adc_channels = ""
     pwm_section = ""
 
@@ -154,20 +156,20 @@ def generate_peripherals_config(project_data):
                     conversions = list(eval(conversions))  # Parse string safely
 
                 adc_channels += (
-                    f"    std::array<uint32_t, {len(conversions)}> {instance.lower()}_channels = "
-                    f"{{ {', '.join(conversions)} }};\n"
+                    f"  std::array<uint32_t, {len(conversions)}> {instance.lower()}_channels = "
+                    f"{{{', '.join(conversions)}}};\n"
                 )
                 periph_section += (
-                    f"    LibXR::STM32ADC {instance.lower()}(&h{instance.lower()}, "
+                    f"  LibXR::STM32ADC {instance.lower()}(&h{instance.lower()}, "
                     f"RawData({instance.lower()}_buffer), {instance.lower()}_channels, 3.3f);\n"
                 )
             elif periph == "FDCAN":
                 periph_section += (
-                    f"    LibXR::STM32CANFD {instance.lower()}(&h{instance.lower()}, "
+                    f"  LibXR::STM32CANFD {instance.lower()}(&h{instance.lower()}, "
                     f'"{instance.lower()}", 5);\n'
                 )
             elif periph == "CAN":
-                periph_section += f'    LibXR::STM32CAN {instance.lower()}(&h{instance.lower()}, "{instance.lower()}", 10);\n'
+                periph_section += f'  LibXR::STM32CAN {instance.lower()}(&h{instance.lower()}, "{instance.lower()}", 10);\n'
             elif periph == "SPI":
                 tx_dma_enabled = config.get("DMA_TX", "DISABLE") == "ENABLE"
                 rx_dma_enabled = config.get("DMA_RX", "DISABLE") == "ENABLE"
@@ -179,7 +181,7 @@ def generate_peripherals_config(project_data):
                     f"{instance.lower()}_buff_rx" if rx_dma_enabled else "{nullptr, 0}"
                 )
 
-                periph_section += f"    LibXR::STM32{periph} {instance.lower()}(&h{instance.lower()}, {tx_buffer}, {rx_buffer});\n"
+                periph_section += f"  LibXR::STM32{periph} {instance.lower()}(&h{instance.lower()}, {tx_buffer}, {rx_buffer});\n"
             elif periph == "USART":
                 tx_dma_enabled = config.get("DMA_TX", "DISABLE") == "ENABLE"
                 rx_dma_enabled = config.get("DMA_RX", "DISABLE") == "ENABLE"
@@ -193,17 +195,17 @@ def generate_peripherals_config(project_data):
 
                 periph_section += (
                     (
-                        f"    LibXR::STM32{periph} {instance.lower()}(&h{instance.lower()}, {tx_buffer}, {rx_buffer});\n"
+                        f"  LibXR::STM32{periph} {instance.lower()}(&h{instance.lower()}, {tx_buffer}, {rx_buffer});\n"
                     )
                     .replace("USART", "UART")
                     .replace("husart", "huart")
                 )
             elif periph == "I2C":
-                periph_section += f"    LibXR::STM32I2C {instance.lower()}(&h{instance.lower()}, {instance.lower()}_buffer);\n"
+                periph_section += f"  LibXR::STM32I2C {instance.lower()}(&h{instance.lower()}, {instance.lower()}_buffer);\n"
             elif periph == "TIM" and "Channels" in instances[instance]:
                 for channel in instances[instance]["Channels"]:
                     channel_num = channel.replace("CH", "")
-                    pwm_section += f"    LibXR::STM32PWM pwm_{instance.lower()}_ch{channel_num}(&h{instance.lower()}, TIM_CHANNEL_{channel_num});\n"
+                    pwm_section += f"  LibXR::STM32PWM pwm_{instance.lower()}_ch{channel_num}(&h{instance.lower()}, TIM_CHANNEL_{channel_num});\n"
 
     return "\n" + adc_channels + pwm_section + periph_section
 
@@ -226,25 +228,25 @@ def generate_terminal_config(project_data, terminal_source):
     terminal_config = ""
 
     if usb_device:
-        terminal_config = f"    LibXR::STM32VirtualUART uart_cdc({usb_device}, 5, 5);\n"
+        terminal_config = f"  LibXR::STM32VirtualUART uart_cdc({usb_device}, 5, 5);\n"
 
     if terminal_source != "":
-        terminal_config += f"    STDIO::read_ = &{terminal_source}.read_port_;\n"
-        terminal_config += f"    STDIO::write_ = &{terminal_source}.write_port_;\n"
+        terminal_config += f"  STDIO::read_ = &{terminal_source}.read_port_;\n"
+        terminal_config += f"  STDIO::write_ = &{terminal_source}.write_port_;\n"
     elif usb_device:
-        terminal_config += "    STDIO::read_ = &uart_cdc.read_port_;\n"
-        terminal_config += "    STDIO::write_ = &uart_cdc.write_port_;\n"
+        terminal_config += "  STDIO::read_ = &uart_cdc.read_port_;\n"
+        terminal_config += "  STDIO::write_ = &uart_cdc.write_port_;\n"
     elif uart_list:
         first_uart = uart_list[0].lower()
-        terminal_config = f"    STDIO::read_ = &{first_uart}.read_port_;\n"
-        terminal_config += f"    STDIO::write_ = &{first_uart}.write_port_;\n"
+        terminal_config = f"  STDIO::read_ = &{first_uart}.read_port_;\n"
+        terminal_config += f"  STDIO::write_ = &{first_uart}.write_port_;\n"
 
     if terminal_config:
-        terminal_config += '    RamFS ramfs("XRobot");\n'
-        terminal_config += "    Terminal terminal(ramfs);\n"
-        terminal_config += "    auto terminal_task = Timer::CreatetTask(terminal.TaskFun, &terminal, 10);\n"
-        terminal_config += "    Timer::Add(terminal_task);\n"
-        terminal_config += "    Timer::Start(terminal_task);\n"
+        terminal_config += "  RamFS ramfs(\"XRobot\");\n"
+        terminal_config += "  Terminal terminal(ramfs);\n"
+        terminal_config += "  auto terminal_task = Timer::CreatetTask(terminal.TaskFun, &terminal, 10);\n"
+        terminal_config += "  Timer::Add(terminal_task);\n"
+        terminal_config += "  Timer::Start(terminal_task);\n"
 
     return terminal_config
 
@@ -260,9 +262,9 @@ def preserve_user_code(existing_code, section):
 
     if section == 3:
         return """
-    while (true) {
-        Thread::Sleep(UINT32_MAX);
-    }
+  while (true) {
+    Thread::Sleep(UINT32_MAX);
+  }
 """
     else:
         return ""  # Return empty to preserve code structure
@@ -275,16 +277,19 @@ def generate_cpp_code(
     if timer_config is None:
         timer_pri = 2
         timer_stack_depth = 512
-        libxr_config["software_timer"] = {"priority": timer_pri, "stack_depth": timer_stack_depth}
+        libxr_config["software_timer"] = {
+            "priority": timer_pri,
+            "stack_depth": timer_stack_depth,
+        }
     else:
         timer_pri = timer_config["priority"]
         timer_stack_depth = timer_config["stack_depth"]
 
     """Generate complete C++ code."""
-    cpp_code_include = f"""#include \"database.hpp\"
+    cpp_code_include = f"""#include \"app_main.h\"
+#include \"database.hpp\"
 #include \"libxr.hpp\"
 #include \"main.h\"
-#include \"app_main.h\"
 #include \"stm32_adc.hpp\"
 #include \"stm32_can.hpp\"
 #include \"stm32_canfd.hpp\"
@@ -305,7 +310,6 @@ using namespace LibXR;
     cpp_code = (
             cpp_code_include
             + f"""
-
 /* User Code Begin 1 */
 """
             + preserve_user_code(existing_code, 1)
@@ -313,15 +317,15 @@ using namespace LibXR;
 /* User Code End 1 */
 
 extern \"C\" void app_main(void) {
-    /* User Code Begin 2 */
+  /* User Code Begin 2 */
 """
             + preserve_user_code(existing_code, 2)
             + f"""
-    /* User Code End 2 */
+  /* User Code End 2 */
 
-    LibXR::STM32Timebase stm32_timebase;
-    LibXR::PlatformInit({timer_pri}, {timer_stack_depth});
-    LibXR::STM32PowerManager power_manager;
+  LibXR::STM32Timebase stm32_timebase;
+  LibXR::PlatformInit({timer_pri}, {timer_stack_depth});
+  LibXR::STM32PowerManager power_manager;
 """
     )
 
@@ -330,15 +334,14 @@ extern \"C\" void app_main(void) {
     cpp_code += generate_terminal_config(project_data, terminal_source)
 
     cpp_code += (
-"""
-    /* User Code Begin 3 */
-    """
+            """
+              /* User Code Begin 3 */
+              """
             + preserve_user_code(existing_code, 3)
             + """
-    /* User Code End 3 */
+  /* User Code End 3 */
 }
-    """
-    )
+""")
 
     return cpp_code
 
@@ -362,16 +365,18 @@ def parse_arguments():
 def generate_app_main_header(output_file):
     """Generate app_main.h header file."""
     with open(output_file, "w", encoding="utf-8") as f:
-        f.write("""#ifdef __cplusplus
+        f.write(
+            """#ifdef __cplusplus
 extern "C" {
 #endif
 
-void app_main(void);  // NOLINT
+void app_main(void); // NOLINT
 
 #ifdef __cplusplus
 }
 #endif
-        """)
+"""
+        )
 
 
 def main():
@@ -381,7 +386,9 @@ def main():
 
     # Parse input and output paths
     input_file = args.input
-    output_file = args.output if args.output else os.path.splitext(input_file)[0] + ".cpp"
+    output_file = (
+        args.output if args.output else os.path.splitext(input_file)[0] + ".cpp"
+    )
 
     # Parse buffer_sizes
     buffer_sizes = {
@@ -391,7 +398,9 @@ def main():
         "ADC": 32,
     }
 
-    libxr_config_path = os.path.dirname(os.path.abspath(output_file)) + "/libxr_config.json"
+    libxr_config_path = (
+            os.path.dirname(os.path.abspath(output_file)) + "/libxr_config.json"
+    )
     print(libxr_config_path)
 
     if os.path.exists(libxr_config_path):

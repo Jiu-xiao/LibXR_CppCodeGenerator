@@ -5,14 +5,37 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "libxr"
 version = "0.1.0"
-description = "A Python package for parsing ioc files and generating C++ code."
-authors = [{name = "Your Name", email = "your.email@example.com"}]
+description = "A Python package for parsing IOC files and generating C++ code."
+requires-python = ">=3.8"
+authors = [
+    {name = "Xiao", email = "2592509183@qq.com"}
+]
+maintainers = [
+    {name = "Xiao", email = "2592509183@qq.com"}
+]
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 keywords = ["code generation", "embedded systems", "automation"]
 dependencies = [
     "argparse",
 ]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+]
+
+[project.optional-dependencies]
+gui = ["PyQt5"]
+cli = ["rich", "click"]
+
+[project.urls]
+Homepage = "https://github.com/Jiu-xiao/libxr"
+Documentation = "https://xrobot-org.github.io/"
+Repository = "https://github.com/Jiu-xiao/LibXR_CppCodeGenerator"
+"Bug Tracker" = "https://github.com/Jiu-xiao/LibXR_CppCodeGenerator/issues"
 
 [project.scripts]
 libxr_parse_ioc = "libxr.PeripheralAnalyzer:main"
