@@ -395,8 +395,8 @@ extern \"C\" void app_main(void) {
 
     cpp_code += (
             """
-              /* User Code Begin 3 */
-              """
+  /* User Code Begin 3 */
+  """
             + preserve_user_code(existing_code, 3)
             + """
   /* User Code End 3 */
