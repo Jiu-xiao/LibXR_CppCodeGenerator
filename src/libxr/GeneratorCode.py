@@ -71,10 +71,18 @@ def generate_dma_buffers(periph, instance, buffer_sizes):
         if buffer_size is None:
             rx_buffer_size = buffer_sizes[periph]
             tx_buffer_size = buffer_sizes[periph]
-            libxr_config[periph][instance] = {
-                "tx_buffer_size": tx_buffer_size,
-                "rx_buffer_size": rx_buffer_size,
-            }
+            if periph == "USART":
+                libxr_config[periph][instance] = {
+                    "tx_buffer_size": tx_buffer_size,
+                    "rx_buffer_size": rx_buffer_size,
+                    "tx_queue_size": 5,
+                    "rx_queue_size": 5,
+                }
+            else:
+                libxr_config[periph][instance] = {
+                    "tx_buffer_size": tx_buffer_size,
+                    "rx_buffer_size": rx_buffer_size,
+                }
         else:
             tx_buffer_size = buffer_size["tx_buffer_size"]
             rx_buffer_size = buffer_size["rx_buffer_size"]
@@ -118,12 +126,22 @@ def generate_extern_config(project_data, buffer_sizes):
                 )
             elif periph == "USB":
                 mode = config.get("Mode", "")
-                if "DEVICE" in instance.upper() or mode == "Device_Only":
-                    externs.add("extern USBD_HandleTypeDef hUsbDeviceFS;")
-                elif "OTG_FS" in instance.upper():
-                    externs.add("extern USBD_HandleTypeDef hUsbOtgFS;")
+                print(instance, mode)
+                if "HS" in mode.upper() or "HS" in instance.upper():
+                    usb_speed = "HS"
                 else:
-                    externs.add(f"extern USBD_HandleTypeDef h{instance.lower()};")
+                    usb_speed = "FS"
+
+                if "DEVICE_ONLY" in mode.upper() or "DEVICE" in instance.upper():
+                    usb_mode = "Device"
+                else:
+                    usb_mode = "Otg"
+
+                externs.add(f"extern USBD_HandleTypeDef hUsb{usb_mode}{usb_speed};")
+                externs.add(f"""extern uint8_t UserRxBuffer{usb_speed}[APP_RX_DATA_SIZE];
+extern uint8_t UserTxBuffer{usb_speed}[APP_TX_DATA_SIZE];
+""")
+
             else:
                 externs.add(f"extern {periph}_HandleTypeDef h{instance.lower()};")
 
@@ -164,12 +182,35 @@ def generate_peripherals_config(project_data):
                     f"RawData({instance.lower()}_buffer), {instance.lower()}_channels, 3.3f);\n"
                 )
             elif periph == "FDCAN":
+                config = libxr_config[periph].get(instance, None)
+
+                if config is None:
+                    config = {"queue_size": 5}
+                    libxr_config[periph][instance] = config
+
+                queue_size = config.get("queue_size", None)
+
+                if queue_size is None:
+                    queue_size = 5
+                    libxr_config[periph][instance]["queue_size"] = queue_size
+
                 periph_section += (
                     f"  LibXR::STM32CANFD {instance.lower()}(&h{instance.lower()}, "
-                    f'"{instance.lower()}", 5);\n'
+                    f'"{instance.lower()}", {queue_size});\n'
                 )
             elif periph == "CAN":
-                periph_section += f'  LibXR::STM32CAN {instance.lower()}(&h{instance.lower()}, "{instance.lower()}", 10);\n'
+                config = libxr_config[periph].get(instance, None)
+
+                if config is None:
+                    config = {"queue_size": 5}
+                    libxr_config[periph][instance] = config
+
+                queue_size = config.get("queue_size", None)
+
+                if queue_size is None:
+                    queue_size = 5
+                    libxr_config[periph][instance]["queue_size"] = queue_size
+                periph_section += f'  LibXR::STM32CAN {instance.lower()}(&h{instance.lower()}, "{instance.lower()}", {queue_size});\n'
             elif periph == "SPI":
                 tx_dma_enabled = config.get("DMA_TX", "DISABLE") == "ENABLE"
                 rx_dma_enabled = config.get("DMA_RX", "DISABLE") == "ENABLE"
@@ -181,10 +222,12 @@ def generate_peripherals_config(project_data):
                     f"{instance.lower()}_buff_rx" if rx_dma_enabled else "{nullptr, 0}"
                 )
 
-                periph_section += f"  LibXR::STM32{periph} {instance.lower()}(&h{instance.lower()}, {tx_buffer}, {rx_buffer});\n"
+                periph_section += f"  LibXR::STM32{periph} {instance.lower()}(&h{instance.lower()}, {rx_buffer}, {tx_buffer});\n"
             elif periph == "USART":
                 tx_dma_enabled = config.get("DMA_TX", "DISABLE") == "ENABLE"
                 rx_dma_enabled = config.get("DMA_RX", "DISABLE") == "ENABLE"
+
+                config = libxr_config["USART"][instance]
 
                 tx_buffer = (
                     f"{instance.lower()}_buff_tx" if tx_dma_enabled else "{nullptr, 0}"
@@ -193,9 +236,19 @@ def generate_peripherals_config(project_data):
                     f"{instance.lower()}_buff_rx" if rx_dma_enabled else "{nullptr, 0}"
                 )
 
+                tx_queue_size = config.get("tx_queue_size", None) if tx_dma_enabled else 0
+                rx_queue_size = config.get("rx_queue_size", None) if rx_dma_enabled else 0
+
+                if tx_queue_size is None:
+                    tx_queue_size = 5
+                    libxr_config["USART"][instance]["tx_queue_size"] = tx_queue_size
+                if rx_queue_size is None:
+                    rx_queue_size = 5
+                    libxr_config["USART"][instance]["rx_queue_size"] = rx_queue_size
+
                 periph_section += (
                     (
-                        f"  LibXR::STM32{periph} {instance.lower()}(&h{instance.lower()}, {tx_buffer}, {rx_buffer});\n"
+                        f"  LibXR::STM32{periph} {instance.lower()}(&h{instance.lower()}, {rx_buffer}, {tx_buffer}, {rx_queue_size}, {tx_queue_size});\n"
                     )
                     .replace("USART", "UART")
                     .replace("husart", "huart")
@@ -215,10 +268,17 @@ def generate_terminal_config(project_data, terminal_source):
     usb_device = None
     for instance, config in project_data["Peripherals"].get("USB", {}).items():
         mode = config.get("Mode", "")
-        if "DEVICE" in instance.upper() or mode == "Device_Only":
-            usb_device = "hUsbDeviceFS"
-        elif "OTG_FS" in instance.upper():
-            usb_device = "hUsbOtgFS"
+        if "HS" in mode.upper() or "HS" in instance.upper():
+            usb_speed = "HS"
+        else:
+            usb_speed = "FS"
+
+        if "DEVICE_ONLY" in mode.upper() or "DEVICE" in instance.upper():
+            usb_mode = "Device"
+        else:
+            usb_mode = "Otg"
+
+        usb_device = f"hUsb{usb_mode}{usb_speed}"
 
     # Get all UART devices
     uart_list = list(project_data["Peripherals"].get("USART", {}).keys()) + list(
@@ -228,7 +288,7 @@ def generate_terminal_config(project_data, terminal_source):
     terminal_config = ""
 
     if usb_device:
-        terminal_config = f"  LibXR::STM32VirtualUART uart_cdc({usb_device}, 5, 5);\n"
+        terminal_config = f"  LibXR::STM32VirtualUART uart_cdc({usb_device}, UserTxBuffer{usb_speed}, UserRxBuffer{usb_speed}, 5, 5);\n"
 
     if terminal_source != "":
         terminal_config += f"  STDIO::read_ = &{terminal_source}.read_port_;\n"

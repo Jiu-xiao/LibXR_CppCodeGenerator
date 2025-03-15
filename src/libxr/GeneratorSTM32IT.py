@@ -10,8 +10,8 @@ def modify_interrupt_file(file_path):
     with open(file_path, "r", encoding="utf-8") as f:
         content = f.readlines()
 
-    extern_declaration = "extern void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);"
-    callback_template = "  HAL_UART_RxCpltCallback(&huart{});\n"
+    extern_declaration = "extern void STM32_UART_ISR_Handler_IDLE(UART_HandleTypeDef *huart);"
+    callback_template = "  STM32_UART_ISR_Handler_IDLE(&huart{});\n"
     modified = False
 
     # Check if extern declaration exists
