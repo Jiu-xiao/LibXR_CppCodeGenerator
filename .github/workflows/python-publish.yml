@@ -29,6 +29,9 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Install Dependencies
+      run:  apt-get update && apt-get install -y file
+
     - name: Install Python Package
       run: |
         pip install .
