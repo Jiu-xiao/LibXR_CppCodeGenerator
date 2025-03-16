@@ -16,6 +16,7 @@ libxr_config = {
     "TIM": {},
     "CAN": {},
     "FDCAN": {},
+    "SYSTEM" : "None"
 }
 
 
@@ -111,6 +112,12 @@ def generate_gpio_config(project_data):
         gpio_section += f"  LibXR::STM32GPIO {gpio_alias(port, config)};\n"
     return gpio_section
 
+
+def get_system_config(project_data):
+    if project_data.get("FreeRTOS"):
+        return "FreeRTOS"
+    else:
+        return "None"
 
 def generate_extern_config(project_data, buffer_sizes):
     """Generate peripheral instantiation code and allocate DMA buffers if needed."""
@@ -345,6 +352,15 @@ def generate_cpp_code(
         timer_pri = timer_config["priority"]
         timer_stack_depth = timer_config["stack_depth"]
 
+    libxr_config["SYSTEM"] = get_system_config(project_data)
+
+    if libxr_config.get("SYSTEM") is "None":
+        paltform_init_args = ""
+    else:
+        paltform_init_args = f"{timer_pri}, {timer_stack_depth}"
+
+    print(f"System: {libxr_config.get('SYSTEM')}")
+
     """Generate complete C++ code."""
     cpp_code_include = f"""#include \"app_main.h\"
 #include \"database.hpp\"
@@ -384,7 +400,7 @@ extern \"C\" void app_main(void) {
   /* User Code End 2 */
 
   LibXR::STM32Timebase stm32_timebase;
-  LibXR::PlatformInit({timer_pri}, {timer_stack_depth});
+  LibXR::PlatformInit({paltform_init_args});
   LibXR::STM32PowerManager power_manager;
 """
     )

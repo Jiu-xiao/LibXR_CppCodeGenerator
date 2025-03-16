@@ -44,7 +44,7 @@ def parse_ioc_file(ioc_path):
                 raw_map[key.replace("\\#", "")] = value
 
     # Parse GPIO configurations
-    gpio_pattern = re.compile(r"^(P[A-I]\d+(?:-\w+)?)\.(Signal|GPIO_Label|GPIO_PuPd)")
+    gpio_pattern = re.compile(r"^(P[A-I]\d+(?:-[\w]+)*)\.(Signal|GPIO_Label|GPIO_PuPd)")
     for key, value in raw_map.items():
         if match := gpio_pattern.match(key):
             pin, prop = match.groups()

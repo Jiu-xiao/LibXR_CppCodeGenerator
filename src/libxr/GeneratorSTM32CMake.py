@@ -9,7 +9,7 @@ file =(
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # LibXR
-set(LIBXR_SYSTEM FreeRTOS)
+set(LIBXR_SYSTEM _LIBXR_SYSTEM_)
 set(LIBXR_DRIVER st)
 add_subdirectory(Middlewares/Third_Party/LibXR)
 target_link_libraries(
@@ -63,8 +63,19 @@ def main():
     if os.path.exists(file_path):
         os.remove(file_path)
 
+    if os.path.exists(input_directory + "/Core/Inc/FreeRTOSConfig.h"):
+        freertos_enable = True
+    else:
+        freertos_enable = False
+
+
+    if freertos_enable:
+        system = "FreeRTOS"
+    else:
+        system = "None"
+
     with open(file_path, "w") as f:
-        f.write(file)
+        f.write(file.replace("_LIBXR_SYSTEM_", system))
         f.close()
 
     print("LibXR.CMake generated successfully.")
