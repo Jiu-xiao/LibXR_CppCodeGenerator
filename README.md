@@ -7,6 +7,7 @@
 [![Documentation](https://img.shields.io/badge/docs-online-brightgreen)](https://xrobot-org.github.io/)
 [![GitHub Issues](https://img.shields.io/github/issues/Jiu-xiao/LibXR_CppCodeGenerator)](https://github.com/Jiu-xiao/LibXR_CppCodeGenerator/issues)
 [![Contributors](https://img.shields.io/github/contributors/Jiu-xiao/libxr)](https://github.com/Jiu-xiao/libxr/graphs/contributors)
+[![CI/CD - Python Package](https://github.com/Jiu-xiao/LibXR_CppCodeGenerator/actions/workflows/python-publish.yml/badge.svg)](https://github.com/Jiu-xiao/LibXR_CppCodeGenerator/actions/workflows/python-publish.yml)
 
 `libxr` is a Python package designed to automate embedded system development by parsing `.ioc` files and generating C++
 code. It significantly reduces manual effort in STM32CubeMX-based projects.
@@ -41,6 +42,8 @@ pip install -e .
 
 ## 📌 API Reference
 
+### `xr_cubemx_cfg`
+
 This command automates STM32CubeMX project setup, including:
 
 - Parsing `.ioc` files and generating JSON configuration.
@@ -53,7 +56,7 @@ This command automates STM32CubeMX project setup, including:
 **Usage:**
 
 ```sh
-libxr_config_stm32_project [-h] -d DIRECTORY [-t TERMINAL] [-c]
+xr_cubemx_cfg [-h] -d DIRECTORY [-t TERMINAL] [-c]
 ```
 
 **Required arguments:**
@@ -67,14 +70,14 @@ libxr_config_stm32_project [-h] -d DIRECTORY [-t TERMINAL] [-c]
 
 ---
 
-### `libxr_parse_ioc`
+### `xr_parse_ioc`
 
 Parses the `.ioc` file in the specified directory and extracts peripheral configurations into a JSON file.
 
 **Usage:**
 
 ```sh
-libxr_parse_ioc [-h] -d DIRECTORY [-o OUTPUT]
+xr_parse_ioc [-h] -d DIRECTORY [-o OUTPUT]
 ```
 
 **Required arguments:**
@@ -83,7 +86,7 @@ libxr_parse_ioc [-h] -d DIRECTORY [-o OUTPUT]
 
 ---
 
-### `libxr_generate_code`
+### `xr_gen_code`
 
 Generates C++ code from the parsed `.ioc` JSON configuration and saves an additional JSON file for further
 modifications.
@@ -91,7 +94,7 @@ modifications.
 **Usage:**
 
 ```sh
-libxr_generate_code [-h] -i INPUT [-o OUTPUT]
+xr_gen_code [-h] -i INPUT [-o OUTPUT]
 ```
 
 **Required arguments:**
@@ -106,14 +109,14 @@ libxr_generate_code [-h] -i INPUT [-o OUTPUT]
 
 ---
 
-### `libxr_generate_stm32_it`
+### `xr_stm32_it`
 
 Modifies STM32 `_it.c` interrupt handler files to include necessary callback functions.
 
 **Usage:**
 
 ```sh
-libxr_generate_stm32_it [-h] input_dir
+xr_stm32_it [-h] input_dir
 ```
 
 **Required arguments:**
@@ -122,14 +125,14 @@ libxr_generate_stm32_it [-h] input_dir
 
 ---
 
-### `libxr_generate_stm32_cmake_clang`
+### `xr_stm32_clang`
 
 Generates `gcc-arm-none-eabi.cmake` for STM32 projects using Clang.
 
 **Usage:**
 
 ```sh
-libxr_generate_stm32_cmake_clang [-h] input_dir
+xr_stm32_clang [-h] input_dir
 ```
 
 **Required arguments:**
@@ -138,14 +141,14 @@ libxr_generate_stm32_cmake_clang [-h] input_dir
 
 ---
 
-### `libxr_generate_stm32_cmake`
+### `xr_stm32_cmake`
 
 Generates `LibXR.CMake` for STM32 projects using LibXR.
 
 **Usage:**
 
 ```sh
-libxr_generate_stm32_cmake [-h] input_dir
+xr_stm32_cmake [-h] input_dir
 ```
 
 **Required arguments:**
@@ -159,6 +162,21 @@ libxr_generate_stm32_cmake [-h] input_dir
 * **STM32CubeMX**: The `.ioc` file must be generated using STM32CubeMX.
 * **CMake**: The project must be built using CMake.
 * **DMA**: UART, SPI and I2C must have DMA enabled.
+
+---
+
+## After Generation
+
+After the code generation is completed, users need to manually add the following include statement:
+
+```cpp
+#include "app_main.h"
+```
+
+Additionally, ensure that the function `app_main();` is called at an appropriate location:
+
+- **For non-RTOS environments**: Call `app_main();` at the end of the `main` function.
+- **For FreeRTOS environments**: Call `app_main();` at the beginning of the thread function.
 
 ---
 

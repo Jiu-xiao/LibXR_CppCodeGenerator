@@ -38,12 +38,12 @@ Repository = "https://github.com/Jiu-xiao/LibXR_CppCodeGenerator"
 "Bug Tracker" = "https://github.com/Jiu-xiao/LibXR_CppCodeGenerator/issues"
 
 [project.scripts]
-libxr_parse_ioc = "libxr.PeripheralAnalyzer:main"
-libxr_generate_code = "libxr.GeneratorCode:main"
-libxr_generate_stm32_it = "libxr.GeneratorSTM32IT:main"
-libxr_generate_stm32_cmake_clang = "libxr.GeneratorSTM32CMakeClang:main"
-libxr_generate_stm32_cmake = "libxr.GeneratorSTM32CMake:main"
-libxr_config_cubemx_project = "libxr.ConfigCubemxProject:main"
+xr_parse_ioc = "libxr.PeripheralAnalyzer:main"
+xr_gen_code = "libxr.GeneratorCode:main"
+xr_stm32_it = "libxr.GeneratorSTM32IT:main"
+xr_stm32_cmake = "libxr.GeneratorSTM32CMake:main"
+xr_stm32_clang = "libxr.GeneratorSTM32CMakeClang:main"
+xr_cubemx_cfg = "libxr.ConfigCubemxProject:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

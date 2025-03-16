@@ -59,23 +59,23 @@ def create_user_directory(project_dir):
 def process_ioc_file(project_dir, json_output):
     """Parse the .ioc file and generate JSON configuration."""
     print("🔄 Parsing .ioc file...")
-    run_command(f"libxr_parse_ioc -d {project_dir} -o {json_output}")
+    run_command(f"xr_parse_ioc -d {project_dir} -o {json_output}")
 
 def generate_cpp_code(json_output, cpp_output):
     """Generate C++ code from JSON configuration."""
     print("🔄 Generating C++ code...")
-    run_command(f"libxr_generate_code -i {json_output} -o {cpp_output}")
+    run_command(f"xr_gen_code -i {json_output} -o {cpp_output}")
 
 def modify_stm32_interrupts(project_dir):
     """Modify STM32 interrupt handler files."""
     print("🔄 Modifying STM32 interrupt files...")
-    run_command(f"libxr_generate_stm32_it {os.path.join(project_dir, 'Core/Src')}")
+    run_command(f"xr_stm32_it {os.path.join(project_dir, 'Core/Src')}")
 
 def generate_cmake_file(project_dir, clang_enable):
     """Generate CMakeLists.txt for STM32 project with selected compiler."""
-    run_command(f"libxr_generate_stm32_cmake {project_dir}")
+    run_command(f"xr_stm32_cmake {project_dir}")
     if clang_enable:
-        run_command(f"libxr_generate_stm32_cmake_clang {project_dir}")
+        run_command(f"xr_stm32_clang {project_dir}")
 
 
 def main():
