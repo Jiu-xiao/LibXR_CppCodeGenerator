@@ -29,12 +29,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Install Dependencies
-      run:  apt-get update && apt-get install -y file
-
     - name: Install Python Package
       run: |
         pip install .
+
+    - name: Compiler Version Check
+      run: |
+        arm-none-eabi-gcc --version
+        clang --version
 
     - name: Get Test Project
       uses: actions/checkout@v4
