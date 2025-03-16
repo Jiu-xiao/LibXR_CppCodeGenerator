@@ -1,5 +1,5 @@
 <h1 align="center">
-<img src="imgs/XRobot.jpeg" width="300">
+<img src="https://github.com/Jiu-xiao/LibXR_CppCodeGenerator/raw/main/imgs/XRobot.jpeg" width="300">
 </h1><br>
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
