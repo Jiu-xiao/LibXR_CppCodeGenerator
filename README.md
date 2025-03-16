@@ -41,26 +41,29 @@ pip install -e .
 
 ## 📌 API Reference
 
-### `libxr_config_cubemx_project`
+This command automates STM32CubeMX project setup, including:
 
-This command **integrates all other commands** into a single automated process, including:
-
-- Parsing `.ioc` files.
+- Parsing `.ioc` files and generating JSON configuration.
 - Generating C++ code.
 - Modifying STM32 interrupt handlers.
-- Creating `CMakeLists.txt`.
-- Initializing Git and setting up the project structure.
+- Creating `CMakeLists.txt` with Clang support (if enabled).
+- Initializing Git and setting up `.gitignore`.
+- Adding the `LibXR` submodule if missing.
 
 **Usage:**
 
 ```sh
-libxr_config_cubemx_project [-h] -d DIRECTORY [-t TERMINAL]
+libxr_config_stm32_project [-h] -d DIRECTORY [-t TERMINAL] [-c]
 ```
 
 **Required arguments:**
 
 - `-d, --directory` (*str*): Path to the STM32CubeMX project.
-- `-t, --terminal` (*str*, optional): Optional terminal device source.
+
+**Optional arguments:**
+
+- `-t, --terminal` (*str*): Specifies the terminal device source.
+- `-c, --clang`: Enables Clang support for compilation.
 
 ---
 
@@ -119,9 +122,25 @@ libxr_generate_stm32_it [-h] input_dir
 
 ---
 
+### `libxr_generate_stm32_cmake_clang`
+
+Generates `gcc-arm-none-eabi.cmake` for STM32 projects using Clang.
+
+**Usage:**
+
+```sh
+libxr_generate_stm32_cmake_clang [-h] input_dir
+```
+
+**Required arguments:**
+
+- `input_dir` (*str*): Path to the STM32CubeMX project.
+
+---
+
 ### `libxr_generate_stm32_cmake`
 
-Generates `CMakeLists.txt` for STM32 projects.
+Generates `LibXR.CMake` for STM32 projects using LibXR.
 
 **Usage:**
 

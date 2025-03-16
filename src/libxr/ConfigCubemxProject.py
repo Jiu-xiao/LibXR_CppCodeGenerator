@@ -4,7 +4,6 @@ import argparse
 import os
 import subprocess
 
-
 def run_command(command):
     """Run a shell command and check the return value."""
     result = subprocess.run(command, shell=True, capture_output=True, text=True)
@@ -15,7 +14,6 @@ def run_command(command):
         print(result.stderr)
         exit(1)
 
-
 def find_ioc_file(directory):
     """Search for a .ioc file in the specified directory."""
     for file in os.listdir(directory):
@@ -23,14 +21,12 @@ def find_ioc_file(directory):
             return os.path.join(directory, file)
     return None
 
-
 def initialize_git_repository(project_dir):
     """Initialize a Git repository if not already present."""
     git_dir = os.path.join(project_dir, ".git")
     if not os.path.exists(git_dir):
         print(f"❌ Directory {project_dir} is not a Git repository. Initializing Git...")
         run_command(f"git init {project_dir}")
-
 
 def create_gitignore_file(project_dir):
     """Create a .gitignore file if it does not exist."""
@@ -45,7 +41,6 @@ def create_gitignore_file(project_dir):
 CMakeFiles/**
 """)
 
-
 def add_git_submodule(project_dir):
     """Add the LibXR submodule if not already present."""
     libxr_path = os.path.join(project_dir, "Middlewares/Third_Party/LibXR")
@@ -54,7 +49,6 @@ def add_git_submodule(project_dir):
         run_command(
             f"cd {project_dir} && git submodule add https://github.com/Jiu-Xiao/libxr.git ./Middlewares/Third_Party/LibXR")
 
-
 def create_user_directory(project_dir):
     """Ensure the User directory exists."""
     user_path = os.path.join(project_dir, "User")
@@ -62,39 +56,38 @@ def create_user_directory(project_dir):
         os.makedirs(user_path)
     return user_path
 
-
 def process_ioc_file(project_dir, json_output):
     """Parse the .ioc file and generate JSON configuration."""
     print("🔄 Parsing .ioc file...")
     run_command(f"libxr_parse_ioc -d {project_dir} -o {json_output}")
-
 
 def generate_cpp_code(json_output, cpp_output):
     """Generate C++ code from JSON configuration."""
     print("🔄 Generating C++ code...")
     run_command(f"libxr_generate_code -i {json_output} -o {cpp_output}")
 
-
 def modify_stm32_interrupts(project_dir):
     """Modify STM32 interrupt handler files."""
     print("🔄 Modifying STM32 interrupt files...")
     run_command(f"libxr_generate_stm32_it {os.path.join(project_dir, 'Core/Src')}")
 
-
-def generate_cmake_file(project_dir):
-    """Generate CMakeLists.txt for STM32 project."""
-    print("🔄 Generating CMakeLists.txt...")
+def generate_cmake_file(project_dir, clang_enable):
+    """Generate CMakeLists.txt for STM32 project with selected compiler."""
     run_command(f"libxr_generate_stm32_cmake {project_dir}")
+    if clang_enable:
+        run_command(f"libxr_generate_stm32_cmake_clang {project_dir}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Automate STM32CubeMX project setup")
     parser.add_argument("-d", "--directory", required=True, help="STM32CubeMX project directory")
     parser.add_argument("-t", "--terminal", default="", help="Optional terminal device source")
+    parser.add_argument("-c", "--clang", action="store_true", default=None, help="Enable Clang")
     args = parser.parse_args()
 
     project_dir = args.directory.rstrip("/")
     terminal_source = args.terminal
+    clang_enable = True if args.clang is not None else False
 
     if not os.path.isdir(project_dir):
         print(f"❌ Directory {project_dir} does not exist")
@@ -131,11 +124,14 @@ def main():
     # Modify STM32 interrupt handlers
     modify_stm32_interrupts(project_dir)
 
-    # Generate CMakeLists.txt
-    generate_cmake_file(project_dir)
+    # Generate CMakeLists.txt with selected compiler
+    generate_cmake_file(project_dir, clang_enable)
 
     # Handle optional terminal source
     if terminal_source:
         print("🔄 Modifying terminal device source...")
 
     print("✅ All tasks completed successfully!")
+
+if __name__ == "__main__":
+    main()
