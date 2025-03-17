@@ -3,10 +3,9 @@
 </h1><br>
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![GitHub Repo](https://img.shields.io/github/stars/Jiu-xiao/LibXR_CppCodeGenerator?style=social)](https://github.com/Jiu-xiao/libxr)
+[![GitHub Repo](https://img.shields.io/github/stars/Jiu-xiao/libxr?style=social)](https://github.com/Jiu-xiao/libxr)
 [![Documentation](https://img.shields.io/badge/docs-online-brightgreen)](https://jiu-xiao.github.io/libxr/)
 [![GitHub Issues](https://img.shields.io/github/issues/Jiu-xiao/LibXR_CppCodeGenerator)](https://github.com/Jiu-xiao/LibXR_CppCodeGenerator/issues)
-[![Contributors](https://img.shields.io/github/contributors/Jiu-xiao/libxr)](https://github.com/Jiu-xiao/libxr/graphs/contributors)
 [![CI/CD - Python Package](https://github.com/Jiu-xiao/LibXR_CppCodeGenerator/actions/workflows/python-publish.yml/badge.svg)](https://github.com/Jiu-xiao/LibXR_CppCodeGenerator/actions/workflows/python-publish.yml)
 
 `libxr` is a Python package designed to automate embedded system development by parsing `.ioc` files and generating C++
@@ -159,9 +158,9 @@ xr_stm32_cmake [-h] input_dir
 
 ### .IOC file requirements
 
-* **STM32CubeMX**: The `.ioc` file must be generated using STM32CubeMX.
-* **CMake**: The project must be built using CMake.
-* **DMA**: UART, SPI and I2C must have DMA enabled.
+- **STM32CubeMX**: The `.ioc` file must be generated using STM32CubeMX.
+- **CMake**: The project must be built using CMake.
+- **DMA**: UART, SPI and I2C must have DMA enabled.
 
 ---
 
