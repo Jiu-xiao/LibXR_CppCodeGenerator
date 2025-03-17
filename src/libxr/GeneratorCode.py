@@ -311,7 +311,7 @@ def generate_terminal_config(project_data, terminal_source):
     if terminal_config:
         terminal_config += "  RamFS ramfs(\"XRobot\");\n"
         terminal_config += "  Terminal terminal(ramfs);\n"
-        terminal_config += "  auto terminal_task = Timer::CreatetTask(terminal.TaskFun, &terminal, 10);\n"
+        terminal_config += "  auto terminal_task = Timer::CreateTask(terminal.TaskFun, &terminal, 10);\n"
         terminal_config += "  Timer::Add(terminal_task);\n"
         terminal_config += "  Timer::Start(terminal_task);\n"
 
