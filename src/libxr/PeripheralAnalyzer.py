@@ -26,7 +26,7 @@ def get_peripheral_defaults(p_type):
 def parse_ioc_file(ioc_path):
     """Parse .ioc file to extract peripheral configurations."""
     if not os.path.exists(ioc_path):
-        print(f"❌ File {ioc_path} not found")
+        print(f"[Error] File {ioc_path} not found")
         return None
 
     peripherals = defaultdict(lambda: defaultdict(dict))
@@ -374,9 +374,9 @@ def save_to_json(data, output_path="parsed_ioc.json"):
     try:
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False, default=str)
-        print(f"\n✅ Configuration saved to: {output_path}")
+        print(f"\n[Pass] Configuration saved to: {output_path}")
     except Exception as e:
-        print(f"❌ Save failed: {e}")
+        print(f"[Error] Save failed: {e}")
 
 
 def main():

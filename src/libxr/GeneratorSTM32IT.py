@@ -46,9 +46,9 @@ def modify_interrupt_file(file_path):
     if modified:
         with open(file_path, "w", encoding="utf-8") as f:
             f.writelines(content)
-        print(f"✅ Modified {file_path}: Added HAL_UART_RxCpltCallback calls.")
+        print(f"[Pass] Modified {file_path}: Added HAL_UART_RxCpltCallback calls.")
     else:
-        print(f"✅ {file_path}: No changes needed.")
+        print(f"[Pass] {file_path}: No changes needed.")
 
 
 def main():

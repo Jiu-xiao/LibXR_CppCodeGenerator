@@ -100,12 +100,12 @@ jobs:
           for file in dist/*.whl dist/*.tar.gz; do
             if [[ -f "$file" ]]; then
               new_name=$(echo "$file" | sed -E "s/^dist\/libxr-([0-9]+\.[0-9]+\.[0-9]+)-py([0-9]+)-none-any\.(whl|tar.gz)$/dist\/libxr-\1-py\2-none-any.\3/")
-              if [[ "$file" != "$new_name" ]]; then  # ✅ 只有当文件名变化时才执行 mv
+              if [[ "$file" != "$new_name" ]]; then
                 mv "$file" "$new_name"
               fi
             fi
           done
-          ls -lh dist/  # ✅ 确保文件格式正确
+          ls -lh dist/
 
       - name: Rename built package files (Windows)
         if: runner.os == 'Windows'
@@ -113,11 +113,11 @@ jobs:
         run: |
           Get-ChildItem -Path dist/* -Include *.whl, *.tar.gz | ForEach-Object {
             $newName = $_.Name -replace '^libxr-([0-9]+\.[0-9]+\.[0-9]+)-py([0-9]+)-none-any\.(whl|tar.gz)', 'libxr-$1-py$2-none-any.$3'
-            if ($_.Name -ne $newName) {  # ✅ 只有当文件名变化时才重命名
+            if ($_.Name -ne $newName) {
               Rename-Item -Path $_.FullName -NewName $newName
             }
           }
-          Get-ChildItem -Path dist/  # ✅ 确保文件格式正确
+          Get-ChildItem -Path dist/
 
       - name: Upload Built Package
         uses: actions/upload-artifact@v4
@@ -148,7 +148,7 @@ jobs:
         run: |
           find dist/ -mindepth 2 -type f -exec mv {} dist/ \;
           rm -rf dist/python-package-*  # 清理空文件夹
-          ls -lh dist/  # ✅ 确保文件都在 dist/ 根目录
+          ls -lh dist/
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
