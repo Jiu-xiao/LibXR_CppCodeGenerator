@@ -175,6 +175,8 @@ set(LINKER_SCRIPT "${{CMAKE_CURRENT_SOURCE_DIR}}/{data["linker_script"]}")
 set(CMAKE_EXE_LINKER_FLAGS
     "-T${{LINKER_SCRIPT}} --specs=nano.specs --specs=nosys.specs -Wl,--cref,--gc-sections,--print-memory-usage,-Map=${{CMAKE_PROJECT_NAME}}.map,--no-warn-execstack,--no-warn-rwx-segments"
     CACHE INTERNAL "" FORCE)
+
+add_compile_options(-gdwarf-4)
 """
     return cmake_file_content
 
