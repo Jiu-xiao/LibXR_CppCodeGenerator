@@ -177,6 +177,19 @@ set(CMAKE_EXE_LINKER_FLAGS
     CACHE INTERNAL "" FORCE)
 
 add_compile_options(-gdwarf-4)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+file(MAKE_DIRECTORY ${{CMAKE_SOURCE_DIR}}/build)
+
+if(NOT TARGET copy_compile_commands_to_build)
+    add_custom_target(copy_compile_commands_to_build ALL
+        COMMAND ${{CMAKE_COMMAND}} -E copy_if_different
+                ${{CMAKE_BINARY_DIR}}/compile_commands.json
+                ${{CMAKE_SOURCE_DIR}}/build/compile_commands.json
+        DEPENDS ${{CMAKE_BINARY_DIR}}/compile_commands.json
+    )
+endif()
 """
     return cmake_file_content
 
