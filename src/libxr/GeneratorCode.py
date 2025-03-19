@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import re
 
 libxr_config = {
     "terminal_source": "",
@@ -123,6 +124,27 @@ def generate_extern_config(project_data, buffer_sizes):
     """Generate peripheral instantiation code and allocate DMA buffers if needed."""
     dma_section = "\n/* DMA Buffers */\n"
     externs = set()
+
+    timebase_config = project_data.get("Timebase", {"Source": "Systick"})
+    if timebase_config.get("Source") != "Systick":
+        timebase_source = timebase_config.get("Source", None)
+        if timebase_source is None:
+            print("Timebase source not found")
+            sys.exit(-1)
+        if timebase_source.startswith("TIM"):
+            number = timebase_source[3:]
+            timebase_source = f"htim{number}"
+        elif timebase_source.startswith("LPTIM"):
+            number = timebase_source[5:]
+            timebase_source = f"hlptim{number}"
+        elif timebase_source.startswith("HRTIM"):
+            number = timebase_source[5:]
+            timebase_source = f"hhrtim{number}"
+        else:
+            print(f"不支持的定时器类型：{timebase_source}")
+            sys.exit(-1)
+
+        externs.add(f"extern TIM_HandleTypeDef {timebase_source};")
 
     for periph, instances in project_data["Peripherals"].items():
         for instance, config in instances.items():
@@ -361,6 +383,31 @@ def generate_cpp_code(
 
     print(f"System: {libxr_config.get('SYSTEM')}")
 
+    timebase_cfg = project_data.get("Timebase", None)
+
+    if timebase_cfg is None:
+        timebase = "LibXR::STM32Timebase stm32_timebase;"
+    elif timebase_cfg.get("Source") == "Systick":
+        timebase = "LibXR::STM32Timebase stm32_timebase;"
+    else:
+        timebase_source = timebase_cfg.get("Source", None)
+        if timebase_source is None:
+            print("Timebase source not found")
+            sys.exit(-1)
+        if timebase_source.startswith("TIM"):
+            number = timebase_source[3:]
+            timebase_source = f"htim{number}"
+        elif timebase_source.startswith("LPTIM"):
+            number = timebase_source[5:]
+            timebase_source = f"hlptim{number}"
+        elif timebase_source.startswith("HRTIM"):
+            number = timebase_source[5:]
+            timebase_source = f"hhrtim{number}"
+        else:
+            print(f"不支持的定时器类型：{timebase_source}")
+            sys.exit(-1)
+        timebase = f"LibXR::STM32TimerTimebase stm32_timebase(&{timebase_source});"
+
     """Generate complete C++ code."""
     cpp_code_include = f"""#include \"app_main.h\"
 #include \"database.hpp\"
@@ -399,7 +446,7 @@ extern \"C\" void app_main(void) {
             + f"""
   /* User Code End 2 */
 
-  LibXR::STM32Timebase stm32_timebase;
+  {timebase}
   LibXR::PlatformInit({paltform_init_args});
   LibXR::STM32PowerManager power_manager;
 """

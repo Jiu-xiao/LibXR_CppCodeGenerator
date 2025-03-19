@@ -18,9 +18,9 @@ def get_peripheral_defaults(p_type):
                 "GeneralCallMode": None, "NoStretchMode": None},
         "USART": {"BaudRate": None, "WordLength": None, "Parity": None, "StopBits": None},
         "USB": {"Mode": None, "Speed": None, "VBus": None, "Endpoints": {}},
-        "DEFAULT": {"Parameters": {}}
+        "Timebase": {"Source": "Systick", "IRQ": None},
     }
-    return defaults.get(p_type, defaults["DEFAULT"]).copy()
+    return defaults.get(p_type, {}).copy()
 
 
 def parse_ioc_file(ioc_path):
@@ -34,6 +34,7 @@ def parse_ioc_file(ioc_path):
     dma_requests = {}
     dma_configs = defaultdict(list)
     freertos_config = {"Tasks": {}, "Heap": None, "Features": {}}
+    timebase = {"Source": "Systick"}
 
     # Read raw key-value pairs
     raw_map = {}
@@ -239,10 +240,13 @@ def parse_ioc_file(ioc_path):
                         "EntryFunction": task_data[3],
                         "Type": task_data[4],
                     }
-            elif "configTOTAL_HEAP_SIZE" in key:
-                freertos_config["Heap"] = value
-            elif "INCLUDE_" in key:
-                freertos_config["Features"][p_prop] = value == "1"
+
+        elif p_name == "NVIC":
+            print("NVIC", p_prop, value)
+            if "TimeBaseIP" in p_prop:
+                timebase["Source"] = value
+            elif "TimeBase" in p_prop:
+                timebase["IRQ"] = value
 
     # Process DMA requests
     for _, request in dma_requests.items():
@@ -279,6 +283,7 @@ def parse_ioc_file(ioc_path):
         ),
         "DMA": clean_structure({"Requests": dma_requests, "Configurations": dma_configs}),
         "FreeRTOS": clean_structure(freertos_config),
+        "Timebase": timebase
     }
 
     return sorted_data
