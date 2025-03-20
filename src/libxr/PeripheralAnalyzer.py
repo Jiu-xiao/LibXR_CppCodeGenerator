@@ -4,8 +4,10 @@ import argparse
 import json
 import os
 import re
+import logging
 from collections import defaultdict
 
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 def get_peripheral_defaults(p_type):
     """Return default configurations for a peripheral type."""
@@ -23,11 +25,10 @@ def get_peripheral_defaults(p_type):
     }
     return defaults.get(p_type, {}).copy()
 
-
 def parse_ioc_file(ioc_path):
     """Parse .ioc file to extract peripheral configurations."""
     if not os.path.exists(ioc_path):
-        print(f"[Error] File {ioc_path} not found")
+        logging.error(f"IOC file not found: {ioc_path}")
         return None
 
     peripherals = defaultdict(lambda: defaultdict(dict))
@@ -305,7 +306,6 @@ def parse_ioc_file(ioc_path):
 
     return sorted_data
 
-
 def print_summary(data):
     """Print a summary of the parsed configuration."""
     print("\n===== Configuration Summary =====")
@@ -390,16 +390,14 @@ def print_summary(data):
             for feat in enabled_features:
                 print(f"    - {feat}")
 
-
 def save_to_json(data, output_path="parsed_ioc.json"):
     """Save parsed configuration to JSON file."""
     try:
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False, default=str)
-        print(f"\n[Pass] Configuration saved to: {output_path}")
+        logging.info(f"Configuration saved successfully to: {output_path}")
     except Exception as e:
-        print(f"[Error] Save failed: {e}")
-
+        logging.error(f"Failed to save JSON output: {e}")
 
 def main():
     parser = argparse.ArgumentParser(
@@ -412,21 +410,22 @@ def main():
     input_dir = args.directory
 
     if not os.path.isdir(input_dir):
-        print(f"Error: Directory '{input_dir}' not found.")
+        logging.error(f"Input directory not found: {input_dir}")
         exit(1)
 
     ioc_files = [f for f in os.listdir(input_dir) if f.endswith(".ioc")]
 
     if not ioc_files:
-        print("Error: No .ioc files found in the specified directory.")
+        logging.error("No .ioc files found in the specified directory.")
         exit(1)
 
     input_path = os.path.join(input_dir, ioc_files[0])
-    print(f"Processing: {input_path}")
+    logging.info(f"Parsing .ioc file: {input_path}")
 
     parsed_data = parse_ioc_file(input_path)
     if parsed_data:
         output_file = args.output if args.output else os.path.splitext(input_path)[0] + ".json"
         save_to_json(parsed_data, output_file)
         print_summary(parsed_data)
-        print(f"JSON output saved to: {output_file}")
+        logging.info(f"JSON output saved to: {output_file}")
+        logging.info("Parsing and export completed successfully.")

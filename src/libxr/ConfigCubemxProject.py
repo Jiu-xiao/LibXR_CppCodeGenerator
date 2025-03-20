@@ -3,16 +3,19 @@
 import argparse
 import os
 import subprocess
+import logging
+import sys
+
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 def run_command(command):
-    """Run a shell command and check the return value."""
     result = subprocess.run(command, shell=True, capture_output=True, text=True)
     if result.returncode == 0:
-        print(f"[Pass] Command executed successfully: {command}")
+        logging.info(f"[OK] {command}")
+        return result.stdout
     else:
-        print(f"[Error] Command failed: {command}")
-        print(result.stderr)
-        exit(1)
+        logging.error(f"[FAILED] {command}\n{result.stderr}")
+        sys.exit(1)
 
 def find_ioc_file(directory):
     """Search for a .ioc file in the specified directory."""
@@ -22,17 +25,15 @@ def find_ioc_file(directory):
     return None
 
 def initialize_git_repository(project_dir):
-    """Initialize a Git repository if not already present."""
     git_dir = os.path.join(project_dir, ".git")
     if not os.path.exists(git_dir):
-        print(f"[Error] Directory {project_dir} is not a Git repository. Initializing Git...")
+        logging.warning(f"Directory {project_dir} is not a Git repository. Initializing Git...")
         run_command(f"git init {project_dir}")
 
 def create_gitignore_file(project_dir):
-    """Create a .gitignore file if it does not exist."""
     gitignore_path = os.path.join(project_dir, ".gitignore")
     if not os.path.exists(gitignore_path):
-        print(f"Creating .gitignore file...")
+        logging.info("Creating .gitignore file...")
         with open(gitignore_path, "w") as gitignore_file:
             gitignore_file.write("""build/**
 .history/**
@@ -42,10 +43,9 @@ CMakeFiles/**
 """)
 
 def add_git_submodule(project_dir):
-    """Add the LibXR submodule if not already present."""
-    libxr_path = os.path.join(project_dir, "Middlewares/Third_Party/LibXR")
+    libxr_path = os.path.join(project_dir, "Middlewares", "Third_Party", "LibXR")
     if not os.path.exists(libxr_path):
-        print("[Error] Middlewares/Third_Party/LibXR not found. Adding submodule...")
+        logging.warning("Middlewares/Third_Party/LibXR not found. Adding submodule...")
         run_command(
             f"cd {project_dir} && git submodule add https://github.com/Jiu-Xiao/libxr.git ./Middlewares/Third_Party/LibXR")
 
@@ -77,17 +77,17 @@ def generate_cmake_file(project_dir, clang_enable):
     if clang_enable:
         run_command(f"xr_stm32_clang {project_dir}")
 
-
 def main():
     parser = argparse.ArgumentParser(description="Automate STM32CubeMX project setup")
     parser.add_argument("-d", "--directory", required=True, help="STM32CubeMX project directory")
     parser.add_argument("-t", "--terminal", default="", help="Optional terminal device source")
-    parser.add_argument("-c", "--clang", action="store_true", default=None, help="Enable Clang")
+    parser.add_argument("-c", "--clang", action="store_true", help="Enable Clang")
+
     args = parser.parse_args()
 
     project_dir = args.directory.rstrip("/")
     terminal_source = args.terminal
-    clang_enable = True if args.clang is not None else False
+    clang_enable = bool(args.clang)
 
     if not os.path.isdir(project_dir):
         print(f"[Error] Directory {project_dir} does not exist")
@@ -131,7 +131,7 @@ def main():
     if terminal_source:
         print("Modifying terminal device source...")
 
-    print("[Pass] All tasks completed successfully!")
+    logging.info("[Pass] All tasks completed successfully!")
 
 if __name__ == "__main__":
     main()

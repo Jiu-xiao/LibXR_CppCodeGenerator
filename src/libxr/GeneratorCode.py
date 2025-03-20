@@ -5,6 +5,9 @@ import json
 import os
 import sys
 import re
+import logging
+
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 libxr_config = {
     "terminal_source": "",
@@ -20,12 +23,10 @@ libxr_config = {
     "SYSTEM" : "None"
 }
 
-
 def load_json(file_path):
     """Load JSON configuration file."""
     with open(file_path, "r", encoding="utf-8") as f:
         return json.load(f)
-
 
 def gpio_alias(port, gpio_data, project_data):
     """Generate GPIO configuration code, supporting CubeMX macros and unaliased cases."""
@@ -67,7 +68,6 @@ def gpio_alias(port, gpio_data, project_data):
     if irq_define:
         return f"{label or port}({port_define}, {pin_define}, {irq_define})"
     return f"{label or port}({port_define}, {pin_define})"
-
 
 def generate_dma_buffers(periph, instance, buffer_sizes):
     """Generate DMA buffers for peripherals requiring DMA."""
@@ -115,14 +115,12 @@ def generate_dma_buffers(periph, instance, buffer_sizes):
         return f"static uint8_t {instance.lower()}_buffer[{buffer_size}];\n"
     return ""  # Other peripherals don't need DMA
 
-
 def generate_gpio_config(project_data):
     """Generate GPIO configuration code."""
     gpio_section = "\n  /* GPIO Configuration */\n"
     for port, config in project_data["GPIO"].items():
         gpio_section += f"  LibXR::STM32GPIO {gpio_alias(port, config, project_data)};\n"
     return gpio_section
-
 
 def get_system_config(project_data):
     if project_data.get("FreeRTOS"):
@@ -189,7 +187,6 @@ extern uint8_t UserTxBuffer{usb_speed}[APP_TX_DATA_SIZE];
                 dma_section += generate_dma_buffers(periph, instance, buffer_sizes)
 
     return "\n".join(sorted(externs)) + "\n" + dma_section
-
 
 def generate_peripherals_config(project_data):
     """Generate peripheral instantiation code and assign DMA buffers."""
@@ -301,7 +298,6 @@ def generate_peripherals_config(project_data):
 
     return "\n" + adc_channels + pwm_section + periph_section
 
-
 def generate_terminal_config(project_data, terminal_source):
     """Generate Terminal configuration based on peripheral settings."""
     usb_device = None
@@ -349,15 +345,15 @@ def generate_terminal_config(project_data, terminal_source):
 
     return terminal_config
 
-
 def preserve_user_code(existing_code, section):
     """Preserve user code blocks between markers."""
     start_marker = f"/* User Code Begin {section} */"
     end_marker = f"/* User Code End {section} */"
 
     if start_marker in existing_code and end_marker in existing_code:
-        preserved_code = existing_code.split(start_marker, 1)[1].split(end_marker, 1)[0]
-        return preserved_code.strip()
+        match = re.search(f"{start_marker}(.*?){end_marker}", existing_code, re.DOTALL)
+        if match:
+            return match.group(1).strip()
 
     if section == 3:
         return """
@@ -367,7 +363,6 @@ def preserve_user_code(existing_code, section):
 """
     else:
         return ""  # Return empty to preserve code structure
-
 
 def generate_cpp_code(
         project_data, project_name, terminal_source, buffer_sizes, existing_code=""
@@ -478,7 +473,6 @@ extern \"C\" void app_main(void) {
 
     return cpp_code
 
-
 def parse_arguments():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -486,14 +480,13 @@ def parse_arguments():
     )
 
     parser.add_argument(
-        "-i", "--input", type=str, required=True, default=24, help="Input file path."
+    "-i", "--input", type=str, required=True, help="Input JSON file path."
     )
     parser.add_argument(
-        "-o", "--output", type=str, default=24, help="Output file path."
+        "-o", "--output", type=str, help="Output C++ file path (default: same name with .cpp extension)."
     )
 
     return parser.parse_args()
-
 
 def generate_app_main_header(output_file):
     """Generate app_main.h header file."""
@@ -510,7 +503,6 @@ void app_main(void); // NOLINT
 #endif
 """
         )
-
 
 def main():
     global libxr_config
@@ -531,9 +523,8 @@ def main():
         "ADC": 32,
     }
 
-    libxr_config_path = (
-            os.path.dirname(os.path.abspath(output_file)) + "/libxr_config.json"
-    )
+    libxr_config_path = os.path.join(os.path.dirname(os.path.abspath(output_file)), "libxr_config.json")
+
     print(libxr_config_path)
 
     if os.path.exists(libxr_config_path):
@@ -556,10 +547,10 @@ def main():
         with open(input_file, "r", encoding="utf-8") as f:
             project_data = json.load(f)
     except FileNotFoundError:
-        print(f"Error: File {input_file} not found.")
+        logging.error(f"Input file not found: {input_file}")
         sys.exit(1)
-    except json.JSONDecodeError:
-        print(f"Error: Failed to parse JSON file {input_file}.")
+    except json.JSONDecodeError as e:
+        logging.error(f"Failed to parse JSON file {input_file}: {e}")
         sys.exit(1)
 
     # Read existing code (if any)
@@ -581,15 +572,13 @@ def main():
     with open(output_file, "w", encoding="utf-8") as f:
         f.write(cpp_code)
 
-    print(f"{output_file} generated successfully!")
+    logging.info(f"Code generated: {output_file}")
 
     # Generate app_main.h
     header_file = os.path.join(os.path.dirname(output_file), "app_main.h")
-    with open(header_file, "w", encoding="utf-8") as f:
-        f.write("void app_main(void);\n")
 
     generate_app_main_header(header_file)
-    print(f"{header_file} generated successfully!")
+    logging.info(f"Header generated: {header_file}")
 
     with open(libxr_config_path, "w", encoding="utf-8") as f:
         # Write the JSON data (libxr_config) to the file

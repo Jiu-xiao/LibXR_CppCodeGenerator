@@ -3,7 +3,9 @@ import argparse
 import fnmatch
 import os
 import re
+import logging
 
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 def modify_interrupt_file(file_path):
     """Modify interrupt handler files to add UART Rx callback functions."""
@@ -25,7 +27,8 @@ extern void STM32_UART_ISR_Handler_IDLE(UART_HandleTypeDef *huart);
                 break
 
     # Match USART/UART IRQ handlers
-    pattern = re.compile(r'void\s+(USART\d+|UART\d+)_IRQHandler\s*\(\s*void\s*\)')
+    pattern = re.compile(r'void\s+(USART\d+|UART\d+)_IRQHandler\s*\(\s*void\s*\)', re.IGNORECASE)
+
     for i, line in enumerate(content):
         match = pattern.search(line)
         if match:
@@ -45,13 +48,16 @@ extern void STM32_UART_ISR_Handler_IDLE(UART_HandleTypeDef *huart);
                     break
 
     # Write back only if modified
+    modified_functions = []
+
     if modified:
         with open(file_path, "w", encoding="utf-8") as f:
             f.writelines(content)
-        print(f"[Pass] Modified {file_path}: Added HAL_UART_RxCpltCallback calls.")
+        logging.info(f"Modified {file_path}: Inserted callbacks for {modified_functions}")
     else:
-        print(f"[Pass] {file_path}: No changes needed.")
+        logging.info(f"No changes needed in {file_path}.")
 
+    return modified, modified_functions
 
 def main():
     parser = argparse.ArgumentParser(description="Modify STM32 interrupt handler files.")
@@ -60,7 +66,23 @@ def main():
     args = parser.parse_args()
     input_directory = args.input_dir
 
+    if not os.path.isdir(input_directory):
+        logging.error(f"Input directory does not exist: {input_directory}")
+        exit(1)
+
+    total_modified_files = 0
+    total_modified_functions = []
+
     for filename in os.listdir(input_directory):
         if fnmatch.fnmatch(filename, "*_it.c"):
             file_path = os.path.join(input_directory, filename)
-            modify_interrupt_file(file_path)
+            modified, modified_funcs = modify_interrupt_file(file_path)
+            if modified:
+                total_modified_files += 1
+                total_modified_functions.extend(modified_funcs)
+
+    logging.info(f"Summary: Modified {total_modified_files} files.")
+    if total_modified_functions:
+        logging.info(f"Modified interrupt handlers: {', '.join(total_modified_functions)}")
+    else:
+        logging.info("No interrupt handlers needed changes.")

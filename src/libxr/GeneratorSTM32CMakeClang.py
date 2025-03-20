@@ -1,7 +1,9 @@
 import argparse
 import os
 import sys
+import logging
 
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 def find_toolchain_file(directory):
     """
@@ -20,7 +22,6 @@ def find_toolchain_file(directory):
     cmake_path = os.path.join(directory, "cmake", target_filename)
 
     return cmake_path if os.path.exists(cmake_path) else None
-
 
 def parse_cmake_file(file_path):
     """
@@ -59,7 +60,6 @@ def parse_cmake_file(file_path):
         sys.exit(1)
 
     return data
-
 
 def gen_toolchain_cmake(data):
     """
@@ -193,7 +193,6 @@ endif()
 """
     return cmake_file_content
 
-
 def main():
     parser = argparse.ArgumentParser(
         description="Parse the CMake configuration file and extract key data. Overwrites the original file by default."
@@ -219,9 +218,10 @@ def main():
         )
         sys.exit(1)
 
-    cmake_file_path = os.path.abspath(args.input_dir) + "/CMakeLists.txt"
+    cmake_file_path = os.path.join(os.path.abspath(args.input_dir), "CMakeLists.txt")
+
     if not os.path.exists(cmake_file_path):
-        print(f"ERROR: CMake file '{cmake_file_path}' not found.", file=sys.stderr)
+        logging.error(f"CMake file not found: {cmake_file_path}")
         sys.exit(1)
 
     print(f"Found CMake file: {toolchain_file}")
@@ -230,10 +230,7 @@ def main():
     data = parse_cmake_file(toolchain_file)
 
     if data["linker_script"] is None or data["target_flags"] is None:
-        print(
-            "ERROR: Failed to parse CMake file. Required fields missing.",
-            file=sys.stderr,
-        )
+        logging.error("Failed to parse CMake file. Required fields are missing.")
         sys.exit(1)
 
     # Default to overwriting the original file
@@ -256,12 +253,12 @@ def main():
             out_file.write(gen_toolchain_cmake(data))
             out_file.close()
 
-        print(f"SUCCESS: CMake configuration updated at: {output_file}")
-        print(f"Linker script path: {data['linker_script']}")
-        print(f"Target architecture flags: {data['target_flags']}")
+        logging.info(f"Toolchain CMake configuration updated: {output_file}")
+        logging.info(f"Using linker script: {data['linker_script']}")
+        logging.info(f"Target CPU flags: {data['target_flags']}")
 
     except Exception as e:
-        print(f"ERROR: Failed to write to file '{output_file}' - {e}", file=sys.stderr)
+        logging.error(f"Failed to write output file '{output_file}': {repr(e)}")
         sys.exit(1)
 
     try:
@@ -278,8 +275,8 @@ def main():
         include_line.strip() in line.strip() for line in cmake_file_lines[:5]
     )
     if found_in_first_five:
-        print(
-            "'include(\"cmake/gcc-arm-none-eabi.cmake\")' already exists in the first 5 lines of the CMake file."
+        logging.info(
+            "Include line already present in first 5 lines of CMakeLists.txt; no modification needed."
         )
         sys.exit(0)
 
@@ -296,4 +293,4 @@ def main():
     with open(cmake_file_path, "w") as f:
         f.writelines(cmake_file_lines)
 
-    print("Modified the CMake file successfully.")
+    logging.info("CMakeLists.txt modified successfully with include directive.")
