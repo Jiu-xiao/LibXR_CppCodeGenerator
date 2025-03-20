@@ -27,7 +27,7 @@ def load_json(file_path):
         return json.load(f)
 
 
-def gpio_alias(port, gpio_data):
+def gpio_alias(port, gpio_data, project_data):
     """Generate GPIO configuration code, supporting CubeMX macros and unaliased cases."""
     label = gpio_data.get("Label")  # Could be empty
     is_exti = gpio_data.get("GPXTI", False)  # Whether it's an EXTI interrupt pin
@@ -43,7 +43,17 @@ def gpio_alias(port, gpio_data):
 
     # Calculate EXTI_IRQn
     pin_num = int(parts[0][2:])
-    if is_exti:
+    print(project_data["Mcu"])
+    if is_exti and project_data["Mcu"]["Family"] == "STM32F0":
+        if pin_num in (0, 1):
+            irq_define = "EXTI0_1_IRQn"
+        elif pin_num in (2, 3):
+            irq_define = "EXTI2_3_IRQn"
+        elif 4 <= pin_num <= 15:
+            irq_define = "EXTI4_15_IRQn"
+        else:
+            irq_define = None  # Should never happen in STM32F0
+    elif is_exti:
         if 5 <= pin_num <= 9:
             irq_define = "EXTI9_5_IRQn"
         elif 10 <= pin_num <= 15:
@@ -110,7 +120,7 @@ def generate_gpio_config(project_data):
     """Generate GPIO configuration code."""
     gpio_section = "\n  /* GPIO Configuration */\n"
     for port, config in project_data["GPIO"].items():
-        gpio_section += f"  LibXR::STM32GPIO {gpio_alias(port, config)};\n"
+        gpio_section += f"  LibXR::STM32GPIO {gpio_alias(port, config, project_data)};\n"
     return gpio_section
 
 
@@ -376,7 +386,7 @@ def generate_cpp_code(
 
     libxr_config["SYSTEM"] = get_system_config(project_data)
 
-    if libxr_config.get("SYSTEM") is "None":
+    if libxr_config.get("SYSTEM") == "None":
         paltform_init_args = ""
     else:
         paltform_init_args = f"{timer_pri}, {timer_stack_depth}"
