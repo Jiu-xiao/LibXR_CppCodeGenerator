@@ -19,6 +19,7 @@ def get_peripheral_defaults(p_type):
         "USART": {"BaudRate": None, "WordLength": None, "Parity": None, "StopBits": None},
         "USB": {"Mode": None, "Speed": None, "VBus": None, "Endpoints": {}},
         "Timebase": {"Source": "Systick", "IRQ": None},
+        "Mcu": {"Family": None, "Type": None},
     }
     return defaults.get(p_type, {}).copy()
 
@@ -35,6 +36,7 @@ def parse_ioc_file(ioc_path):
     dma_configs = defaultdict(list)
     freertos_config = {"Tasks": {}, "Heap": None, "Features": {}}
     timebase = {"Source": "Systick"}
+    mcu_config = {"Family": None, "Type": None}
 
     # Read raw key-value pairs
     raw_map = {}
@@ -51,13 +53,27 @@ def parse_ioc_file(ioc_path):
             pin, prop = match.groups()
             prop_map = {
                 "Signal": ("Signal", value),
-                "GPIO_Label": ("Label", value),
+                "GPIO_Label": ("Label", re.match(r"^\S+", value).group(0)),
                 "GPIO_PuPd": ("Pull", value),
             }
             field, val = prop_map[prop]
             gpio_pins[pin][field] = val
             if "GPXTI" in value:
                 gpio_pins[pin]["GPXTI"] = True
+
+    for key, value in raw_map.items():
+        parts = key.split(".")
+        if len(parts) < 2:
+            continue
+
+        p_name = parts[0]
+        p_prop = parts[1]
+
+        if p_name.startswith("Mcu"):
+            if "Family" in p_prop:
+                mcu_config["Family"] = value
+            elif "CPN" in p_prop:
+                mcu_config["Type"] = value
 
     # Parse peripherals
     for key, value in raw_map.items():
@@ -283,7 +299,8 @@ def parse_ioc_file(ioc_path):
         ),
         "DMA": clean_structure({"Requests": dma_requests, "Configurations": dma_configs}),
         "FreeRTOS": clean_structure(freertos_config),
-        "Timebase": timebase
+        "Timebase": timebase,
+        "Mcu": mcu_config
     }
 
     return sorted_data
