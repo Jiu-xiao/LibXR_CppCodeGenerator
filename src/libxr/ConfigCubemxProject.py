@@ -8,6 +8,18 @@ import sys
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
+def is_git_repo(path):
+    try:
+        result = subprocess.run(
+            ["git", "-C", path, "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return result.stdout.strip() == "true"
+    except subprocess.CalledProcessError:
+        return False
+
 def run_command(command):
     result = subprocess.run(command, shell=True, capture_output=True, text=True)
     if result.returncode == 0:
@@ -24,12 +36,6 @@ def find_ioc_file(directory):
             return os.path.join(directory, file)
     return None
 
-def initialize_git_repository(project_dir):
-    git_dir = os.path.join(project_dir, ".git")
-    if not os.path.exists(git_dir):
-        logging.warning(f"Directory {project_dir} is not a Git repository. Initializing Git...")
-        run_command(f"git init {project_dir}")
-
 def create_gitignore_file(project_dir):
     gitignore_path = os.path.join(project_dir, ".gitignore")
     if not os.path.exists(gitignore_path):
@@ -42,12 +48,24 @@ def create_gitignore_file(project_dir):
 CMakeFiles/**
 """)
 
-def add_git_submodule(project_dir):
+def add_libxr(project_dir):
     libxr_path = os.path.join(project_dir, "Middlewares", "Third_Party", "LibXR")
+    
+    if not is_git_repo(project_dir):
+        logging.warning(f"{project_dir} is not a Git repository. Initializing...")
+        run_command(f"git init {project_dir}")
+
     if not os.path.exists(libxr_path):
-        logging.warning("Middlewares/Third_Party/LibXR not found. Adding submodule...")
+        logging.info("Adding LibXR as submodule...")
         run_command(
-            f"cd {project_dir} && git submodule add https://github.com/Jiu-Xiao/libxr.git ./Middlewares/Third_Party/LibXR")
+            f"cd {project_dir} && git submodule add https://github.com/Jiu-Xiao/libxr.git ./Middlewares/Third_Party/LibXR"
+        )
+        run_command(f"cd {project_dir} && git submodule update --init --recursive")
+        logging.info("LibXR submodule added and initialized.")
+    else:
+        logging.info("LibXR submodule already exists. Checking for updates...")
+        run_command(f"cd {project_dir} && git submodule update --init --recursive")
+        logging.info("LibXR submodule updated.")
 
 def create_user_directory(project_dir):
     """Ensure the User directory exists."""
@@ -93,12 +111,8 @@ def main():
         print(f"[Error] Directory {project_dir} does not exist")
         exit(1)
 
-    # Initialize Git repository and .gitignore
-    initialize_git_repository(project_dir)
-    create_gitignore_file(project_dir)
-
     # Add Git submodule if necessary
-    add_git_submodule(project_dir)
+    add_libxr(project_dir)
 
     # Find .ioc file
     ioc_file = find_ioc_file(project_dir)
