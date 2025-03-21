@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import argparse
-import json
+import yaml
 import os
 import sys
 import re
@@ -23,10 +23,10 @@ libxr_config = {
     "SYSTEM" : "None"
 }
 
-def load_json(file_path):
-    """Load JSON configuration file."""
+def load_yaml(file_path):
+    """Load YAML configuration file."""
     with open(file_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        return yaml.safe_load(f)
 
 def gpio_alias(port, gpio_data, project_data):
     """Generate GPIO configuration code, supporting CubeMX macros and unaliased cases."""
@@ -476,12 +476,13 @@ extern \"C\" void app_main(void) {
 def parse_arguments():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Generate C++ code from JSON input with configurable DMA buffer sizes."
+        description="Generate C++ code from YAML input with configurable DMA buffer sizes."
     )
 
     parser.add_argument(
-    "-i", "--input", type=str, required=True, help="Input JSON file path."
+        "-i", "--input", type=str, required=True, help="Input YAML file path."
     )
+
     parser.add_argument(
         "-o", "--output", type=str, help="Output C++ file path (default: same name with .cpp extension)."
     )
@@ -523,34 +524,31 @@ def main():
         "ADC": 32,
     }
 
-    libxr_config_path = os.path.join(os.path.dirname(os.path.abspath(output_file)), "libxr_config.json")
-
-    print(libxr_config_path)
+    libxr_config_path = os.path.join(os.path.dirname(os.path.abspath(output_file)), "libxr_config.yaml")
 
     if os.path.exists(libxr_config_path):
         try:
             with open(libxr_config_path, "r", encoding="utf-8") as f:
-                libxr_config = json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
+                libxr_config = yaml.safe_load(f)
+        except (yaml.YAMLError, IOError) as e:
             print(f"Failed to load config: {e}, saving default config.")
             with open(libxr_config_path, "w", encoding="utf-8") as f:
-                json.dump(libxr_config, f, indent=4, ensure_ascii=False)
+                yaml.dump(libxr_config, f, allow_unicode=True, sort_keys=False)
     else:
         os.makedirs(os.path.dirname(libxr_config_path), exist_ok=True)
         with open(libxr_config_path, "w", encoding="utf-8") as f:
-            json.dump(libxr_config, f, indent=4, ensure_ascii=False)
+            yaml.dump(libxr_config, f, allow_unicode=True, sort_keys=False)
 
     terminal_source = libxr_config.get("terminal_source", "")
 
-    # Read JSON data
+    # Read YAML data
     try:
-        with open(input_file, "r", encoding="utf-8") as f:
-            project_data = json.load(f)
+        project_data = load_yaml(input_file)
     except FileNotFoundError:
         logging.error(f"Input file not found: {input_file}")
         sys.exit(1)
-    except json.JSONDecodeError as e:
-        logging.error(f"Failed to parse JSON file {input_file}: {e}")
+    except yaml.YAMLError as e:
+        logging.error(f"Failed to parse YAML file {input_file}: {e}")
         sys.exit(1)
 
     # Read existing code (if any)
@@ -581,5 +579,5 @@ def main():
     logging.info(f"Header generated: {header_file}")
 
     with open(libxr_config_path, "w", encoding="utf-8") as f:
-        # Write the JSON data (libxr_config) to the file
-        json.dump(libxr_config, f, indent=4, ensure_ascii=False)
+        # Write the YAML data (libxr_config) to the file
+        yaml.dump(libxr_config, f, allow_unicode=True, sort_keys=False)

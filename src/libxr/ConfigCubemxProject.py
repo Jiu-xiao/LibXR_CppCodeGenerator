@@ -38,7 +38,7 @@ def create_gitignore_file(project_dir):
             gitignore_file.write("""build/**
 .history/**
 .cache/**
-.config.json
+.config.yaml
 CMakeFiles/**
 """)
 
@@ -56,15 +56,15 @@ def create_user_directory(project_dir):
         os.makedirs(user_path)
     return user_path
 
-def process_ioc_file(project_dir, json_output):
-    """Parse the .ioc file and generate JSON configuration."""
+def process_ioc_file(project_dir, yaml_output):
+    """Parse the .ioc file and generate YAML configuration."""
     print("Parsing .ioc file...")
-    run_command(f"xr_parse_ioc -d {project_dir} -o {json_output}")
+    run_command(f"xr_parse_ioc -d {project_dir} -o {yaml_output}")
 
-def generate_cpp_code(json_output, cpp_output):
-    """Generate C++ code from JSON configuration."""
+def generate_cpp_code(yaml_output, cpp_output):
+    """Generate C++ code from YAML configuration."""
     print("Generating C++ code...")
-    run_command(f"xr_gen_code -i {json_output} -o {cpp_output}")
+    run_command(f"xr_gen_code -i {yaml_output} -o {cpp_output}")
 
 def modify_stm32_interrupts(project_dir):
     """Modify STM32 interrupt handler files."""
@@ -112,14 +112,14 @@ def main():
     user_path = create_user_directory(project_dir)
 
     # Define paths
-    json_output = os.path.join(project_dir, ".config.json")
+    yaml_output = os.path.join(project_dir, ".config.yaml")
     cpp_output = os.path.join(user_path, "app_main.cpp")
 
     # Process .ioc file
-    process_ioc_file(project_dir, json_output)
+    process_ioc_file(project_dir, yaml_output)
 
     # Generate C++ code
-    generate_cpp_code(json_output, cpp_output)
+    generate_cpp_code(yaml_output, cpp_output)
 
     # Modify STM32 interrupt handlers
     modify_stm32_interrupts(project_dir)

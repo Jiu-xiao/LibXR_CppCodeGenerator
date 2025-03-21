@@ -1,6 +1,6 @@
 .history/**
 .idea/**
-*.json
+*.yaml
 *.ioc
 *.cpp
 *.hpp

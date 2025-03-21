@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 
 import argparse
-import json
 import os
 import re
 import logging
+import yaml
 from collections import defaultdict
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
@@ -390,21 +390,21 @@ def print_summary(data):
             for feat in enabled_features:
                 print(f"    - {feat}")
 
-def save_to_json(data, output_path="parsed_ioc.json"):
-    """Save parsed configuration to JSON file."""
+def save_to_yaml(data, output_path="parsed_ioc.yaml"):
+    """Save parsed configuration to YAML file."""
     try:
         with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False, default=str)
+            yaml.dump(data, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
         logging.info(f"Configuration saved successfully to: {output_path}")
     except Exception as e:
-        logging.error(f"Failed to save JSON output: {e}")
+        logging.error(f"Failed to save YAML output: {e}")
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Parse STM32Cube .ioc files in a directory and generate JSON configuration.")
+        description="Parse STM32Cube .ioc files in a directory and generate YAML configuration.")
     parser.add_argument("-d", "--directory", required=True, help="Input directory containing .ioc files")
     parser.add_argument("-o", "--output",
-                        help="Output JSON file path (optional, defaults to input file name with .json)")
+                        help="Output YAML file path (optional, defaults to input file name with .yaml)")
 
     args = parser.parse_args()
     input_dir = args.directory
@@ -424,8 +424,8 @@ def main():
 
     parsed_data = parse_ioc_file(input_path)
     if parsed_data:
-        output_file = args.output if args.output else os.path.splitext(input_path)[0] + ".json"
-        save_to_json(parsed_data, output_file)
+        output_file = args.output if args.output else os.path.splitext(input_path)[0] + ".yaml"
+        save_to_yaml(parsed_data, output_file)
         print_summary(parsed_data)
-        logging.info(f"JSON output saved to: {output_file}")
+        logging.info(f"YAML output saved to: {output_file}")
         logging.info("Parsing and export completed successfully.")
