@@ -9,6 +9,8 @@ import logging
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
+device_list = {"power_manager": ["power_manager"]}
+
 libxr_config = {
     "terminal_source": "",
     "software_timer": {"priority": 2, "stack_depth": 512},
@@ -20,13 +22,24 @@ libxr_config = {
     "TIM": {},
     "CAN": {},
     "FDCAN": {},
-    "SYSTEM" : "None"
+    "SYSTEM": "None"
 }
+
+
+def init_device_alias_from_config():
+    """从 libxr_config['xrobot'] 加载已有别名映射，如果不存在则初始化为变量名本身。"""
+    global device_list
+    xrobot_config = libxr_config.get("xrobot", {})
+    for var in list(device_list.keys()):
+        alias = xrobot_config.get(var, var)  # 如果已存在别名则使用，否则用变量名本身
+        device_list[var] = alias
+
 
 def load_yaml(file_path):
     """Load YAML configuration file."""
     with open(file_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
 
 def gpio_alias(port, gpio_data, project_data):
     """Generate GPIO configuration code, supporting CubeMX macros and unaliased cases."""
@@ -44,7 +57,6 @@ def gpio_alias(port, gpio_data, project_data):
 
     # Calculate EXTI_IRQn
     pin_num = int(parts[0][2:])
-    print(project_data["Mcu"])
     if is_exti and project_data["Mcu"]["Family"] == "STM32F0":
         if pin_num in (0, 1):
             irq_define = "EXTI0_1_IRQn"
@@ -68,6 +80,7 @@ def gpio_alias(port, gpio_data, project_data):
     if irq_define:
         return f"{label or port}({port_define}, {pin_define}, {irq_define})"
     return f"{label or port}({port_define}, {pin_define})"
+
 
 def generate_dma_buffers(periph, instance, buffer_sizes):
     """Generate DMA buffers for peripherals requiring DMA."""
@@ -115,6 +128,7 @@ def generate_dma_buffers(periph, instance, buffer_sizes):
         return f"static uint8_t {instance.lower()}_buffer[{buffer_size}];\n"
     return ""  # Other peripherals don't need DMA
 
+
 def generate_gpio_config(project_data):
     """Generate GPIO configuration code."""
     gpio_section = "\n  /* GPIO Configuration */\n"
@@ -122,11 +136,13 @@ def generate_gpio_config(project_data):
         gpio_section += f"  LibXR::STM32GPIO {gpio_alias(port, config, project_data)};\n"
     return gpio_section
 
+
 def get_system_config(project_data):
     if project_data.get("FreeRTOS"):
         return "FreeRTOS"
     else:
         return "None"
+
 
 def generate_extern_config(project_data, buffer_sizes):
     """Generate peripheral instantiation code and allocate DMA buffers if needed."""
@@ -163,7 +179,6 @@ def generate_extern_config(project_data, buffer_sizes):
                 )
             elif periph == "USB":
                 mode = config.get("Mode", "")
-                print(instance, mode)
                 if "HS" in mode.upper() or "HS" in instance.upper():
                     usb_speed = "HS"
                 else:
@@ -188,8 +203,11 @@ extern uint8_t UserTxBuffer{usb_speed}[APP_TX_DATA_SIZE];
 
     return "\n".join(sorted(externs)) + "\n" + dma_section
 
+
 def generate_peripherals_config(project_data):
     """Generate peripheral instantiation code and assign DMA buffers."""
+    global device_list
+
     periph_section = "\n  /* Peripheral Configuration */\n"
     adc_channels = ""
     pwm_section = ""
@@ -217,6 +235,10 @@ def generate_peripherals_config(project_data):
                     f"  LibXR::STM32ADC {instance.lower()}(&h{instance.lower()}, "
                     f"RawData({instance.lower()}_buffer), {instance.lower()}_channels, 3.3f);\n"
                 )
+
+                if device_list.get(f"{instance.lower()}", None) is None:
+                    device_list[f"{instance.lower()}"] = [f"{instance.lower()}"]
+
             elif periph == "FDCAN":
                 config = libxr_config[periph].get(instance, None)
 
@@ -234,6 +256,10 @@ def generate_peripherals_config(project_data):
                     f"  LibXR::STM32CANFD {instance.lower()}(&h{instance.lower()}, "
                     f'"{instance.lower()}", {queue_size});\n'
                 )
+
+                if device_list.get(f"{instance.lower()}", None) is None:
+                    device_list[f"{instance.lower()}"] = [f"{instance.lower()}"]
+
             elif periph == "CAN":
                 config = libxr_config[periph].get(instance, None)
 
@@ -247,6 +273,10 @@ def generate_peripherals_config(project_data):
                     queue_size = 5
                     libxr_config[periph][instance]["queue_size"] = queue_size
                 periph_section += f'  LibXR::STM32CAN {instance.lower()}(&h{instance.lower()}, "{instance.lower()}", {queue_size});\n'
+
+                if device_list.get(f"{instance.lower()}", None) is None:
+                    device_list[f"{instance.lower()}"] = [f"{instance.lower()}"]
+
             elif periph == "SPI":
                 tx_dma_enabled = config.get("DMA_TX", "DISABLE") == "ENABLE"
                 rx_dma_enabled = config.get("DMA_RX", "DISABLE") == "ENABLE"
@@ -259,6 +289,9 @@ def generate_peripherals_config(project_data):
                 )
 
                 periph_section += f"  LibXR::STM32{periph} {instance.lower()}(&h{instance.lower()}, {rx_buffer}, {tx_buffer});\n"
+                if device_list.get(f"{instance.lower()}", None) is None:
+                    device_list[f"{instance.lower()}"] = [f"{instance.lower()}"]
+
             elif periph == "USART":
                 tx_dma_enabled = config.get("DMA_TX", "DISABLE") == "ENABLE"
                 rx_dma_enabled = config.get("DMA_RX", "DISABLE") == "ENABLE"
@@ -289,14 +322,24 @@ def generate_peripherals_config(project_data):
                     .replace("USART", "UART")
                     .replace("husart", "huart")
                 )
+
+                if device_list.get(f"{instance.lower()}", None) is None:
+                    device_list[f"{instance.lower()}"] = [f"{instance.lower()}"]
+
             elif periph == "I2C":
                 periph_section += f"  LibXR::STM32I2C {instance.lower()}(&h{instance.lower()}, {instance.lower()}_buffer);\n"
+                if device_list.get(f"{instance.lower()}", None) is None:
+                    device_list[f"{instance.lower()}"] = [f"{instance.lower()}"]
+
             elif periph == "TIM" and "Channels" in instances[instance]:
                 for channel in instances[instance]["Channels"]:
                     channel_num = channel.replace("CH", "")
                     pwm_section += f"  LibXR::STM32PWM pwm_{instance.lower()}_ch{channel_num}(&h{instance.lower()}, TIM_CHANNEL_{channel_num});\n"
+                    if device_list.get(f"pwm_{instance.lower()}_ch{channel_num}", None) is None:
+                        device_list[f"pwm_{instance.lower()}_ch{channel_num}"] = [f"pwm_{instance.lower()}_ch{channel_num}"]
 
     return "\n" + adc_channels + pwm_section + periph_section
+
 
 def generate_terminal_config(project_data, terminal_source):
     """Generate Terminal configuration based on peripheral settings."""
@@ -324,6 +367,8 @@ def generate_terminal_config(project_data, terminal_source):
 
     if usb_device:
         terminal_config = f"  LibXR::STM32VirtualUART uart_cdc({usb_device}, UserTxBuffer{usb_speed}, UserRxBuffer{usb_speed}, 5, 5);\n"
+        if device_list.get("uart_cdc", None) is None:
+            device_list["uart_cdc"] = ["uart_cdc"]
 
     if terminal_source != "":
         terminal_config += f"  STDIO::read_ = &{terminal_source}.read_port_;\n"
@@ -343,7 +388,13 @@ def generate_terminal_config(project_data, terminal_source):
         terminal_config += "  Timer::Add(terminal_task);\n"
         terminal_config += "  Timer::Start(terminal_task);\n"
 
+        if device_list.get("ramfs", None) is None:
+            device_list["ramfs"] = ["ramfs"]
+        if device_list.get("terminal", None) is None:
+            device_list["terminal"] = ["terminal"]
+
     return terminal_config
+
 
 def preserve_user_code(existing_code, section):
     """Preserve user code blocks between markers."""
@@ -364,9 +415,18 @@ def preserve_user_code(existing_code, section):
     else:
         return ""  # Return empty to preserve code structure
 
+
 def generate_cpp_code(
-        project_data, project_name, terminal_source, buffer_sizes, existing_code=""
+        project_data, project_name, terminal_source, buffer_sizes, existing_code="", use_xrobot=False
 ):
+    if use_xrobot:
+        xrobot_header = """#include "peripheral_manager.hpp"
+#include "application.hpp"
+#include "hardware_container.hpp"
+"""
+    else:
+        xrobot_header = ""
+
     timer_config = libxr_config.get("software_timer", (None, None))
     if timer_config is None:
         timer_pri = 2
@@ -429,6 +489,7 @@ def generate_cpp_code(
 #include \"stm32_timebase.hpp\"
 #include \"stm32_uart.hpp\"
 #include \"stm32_usb.hpp\"
+{xrobot_header}
 
 using namespace LibXR;
 """ + generate_extern_config(
@@ -461,17 +522,43 @@ extern \"C\" void app_main(void) {
     cpp_code += generate_peripherals_config(project_data)
     cpp_code += generate_terminal_config(project_data, terminal_source)
 
+    xrobot_code = "  PeripheralManager peripheral_manager(XRobot::HardwareContainer{\n"
+
+    for dev, aliases in device_list.items():
+        for alias in aliases:
+            xrobot_code += f"    XRobot::MakeEntry({dev}, \"{alias}\"),\n"
+
+    xrobot_code += "  });\n"
+
+    xrobot_code += """\n  XRobot::ApplicationManager application_manager;
+
+  /* XRobot Automatic Generated Code Start */
+
+  /* XRobot Automatic Generated Code End */
+
+
+  application_manager.InitAll(peripheral_manager);
+  
+  while (true) {
+    application_manager.MonitorAll();
+    Thread::Sleep(1000);
+  }
+"""
+
+    user_code_3 = preserve_user_code(existing_code, 3) if not use_xrobot else xrobot_code
+
     cpp_code += (
             """
   /* User Code Begin 3 */
-  """
-            + preserve_user_code(existing_code, 3)
+"""
+            + user_code_3
             + """
   /* User Code End 3 */
 }
 """)
 
     return cpp_code
+
 
 def parse_arguments():
     """Parse command-line arguments."""
@@ -487,7 +574,12 @@ def parse_arguments():
         "-o", "--output", type=str, help="Output C++ file path (default: same name with .cpp extension)."
     )
 
+    parser.add_argument(
+        "--xrobot", action="store_true", help="Generate additional XRobot2.0 integration code."
+    )
+
     return parser.parse_args()
+
 
 def generate_app_main_header(output_file):
     """Generate app_main.h header file."""
@@ -505,8 +597,9 @@ void app_main(void); // NOLINT
 """
         )
 
+
 def main():
-    global libxr_config
+    global libxr_config, device_list
 
     args = parse_arguments()
 
@@ -515,6 +608,8 @@ def main():
     output_file = (
         args.output if args.output else os.path.splitext(input_file)[0] + ".cpp"
     )
+
+    use_xrobot = args.xrobot
 
     # Parse buffer_sizes
     buffer_sizes = {
@@ -541,6 +636,9 @@ def main():
 
     terminal_source = libxr_config.get("terminal_source", "")
 
+    if libxr_config.get("xrobot", None) is not None:
+        device_list = libxr_config["xrobot"]
+
     # Read YAML data
     try:
         project_data = load_yaml(input_file)
@@ -564,6 +662,7 @@ def main():
         terminal_source,
         buffer_sizes,
         existing_code,
+        use_xrobot
     )
 
     # Write to output file
@@ -579,5 +678,7 @@ def main():
     logging.info(f"Header generated: {header_file}")
 
     with open(libxr_config_path, "w", encoding="utf-8") as f:
+        if use_xrobot:
+            libxr_config["xrobot"] = device_list
         # Write the YAML data (libxr_config) to the file
         yaml.dump(libxr_config, f, allow_unicode=True, sort_keys=False)
