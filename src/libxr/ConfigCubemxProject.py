@@ -87,10 +87,13 @@ def process_ioc_file(project_dir, yaml_output):
     print("Parsing .ioc file...")
     run_command(f"xr_parse_ioc -d {project_dir} -o {yaml_output}")
 
-def generate_cpp_code(yaml_output, cpp_output):
-    """Generate C++ code from YAML configuration."""
+def generate_cpp_code(yaml_output, cpp_output, xrobot_enable=False):
+    """Generate C++ code from YAML configuration, with optional XRobot support."""
     print("Generating C++ code...")
-    run_command(f"xr_gen_code -i {yaml_output} -o {cpp_output}")
+    cmd = f"xr_gen_code_stm32 -i {yaml_output} -o {cpp_output}"
+    if xrobot_enable:
+        cmd += " --xrobot"
+    run_command(cmd)
 
 def modify_stm32_interrupts(project_dir):
     """Modify STM32 interrupt handler files."""
@@ -108,12 +111,14 @@ def main():
     parser.add_argument("-d", "--directory", required=True, help="STM32CubeMX project directory")
     parser.add_argument("-t", "--terminal", default="", help="Optional terminal device source")
     parser.add_argument("-c", "--clang", action="store_true", help="Enable Clang")
+    parser.add_argument("--xrobot", action="store_true", help="Support XRobot")
 
     args = parser.parse_args()
 
     project_dir = args.directory.rstrip("/")
     terminal_source = args.terminal
     clang_enable = bool(args.clang)
+    xrobot_enable = bool(args.xrobot)
 
     if not os.path.isdir(project_dir):
         print(f"[Error] Directory {project_dir} does not exist")
@@ -141,7 +146,7 @@ def main():
     process_ioc_file(project_dir, yaml_output)
 
     # Generate C++ code
-    generate_cpp_code(yaml_output, cpp_output)
+    generate_cpp_code(yaml_output, cpp_output, xrobot_enable)
 
     # Modify STM32 interrupt handlers
     modify_stm32_interrupts(project_dir)
