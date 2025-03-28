@@ -389,7 +389,8 @@ class PeripheralFactory:
         tx_queue = uart_config.setdefault("tx_queue_size", 5)
         rx_queue = uart_config.setdefault("rx_queue_size", 5)
 
-        code = f"  STM32UART {instance.lower()}(&h{instance.lower()}, {rx_buf}, {tx_buf}, {rx_queue}, {tx_queue});\n"
+        code = f"  STM32UART {instance.lower()}(&h{instance.lower().replace("usart", "uart")},\n" \
+               f"              {rx_buf}, {tx_buf}, {rx_queue}, {tx_queue});\n"
         _register_device(f"{instance.lower()}", "UART")
         return ("main", code)
 
@@ -504,7 +505,10 @@ def _generate_extern_declarations(project_data: dict) -> str:
                     externs.add(f'extern uint8_t UserRxBuffer{usb_info['speed']}[APP_RX_DATA_SIZE];')
             else:
                 handle_type = 'UART_HandleTypeDef' if p_type in ['USART', 'UART', 'LPUART'] else f'{p_type}_HandleTypeDef'
-                externs.add(f'extern {handle_type} h{instance.lower()};')
+                if p_type in ['USART', 'UART', 'LPUART']:
+                    externs.add(f'extern {handle_type} h{instance.lower().replace("usart", "uart")};')
+                else:
+                    externs.add(f'extern {handle_type} h{instance.lower()};')
 
     return '/* External HAL Declarations */\n' + '\n'.join(sorted(externs)) + '\n'
 
@@ -523,7 +527,7 @@ def preserve_user_blocks(existing_code: str, section: int) -> str:
 
     pattern, default = patterns[section]
     match = re.search(pattern, existing_code, re.DOTALL)
-    return match.group(1).strip() if match else default
+    return '  ' + match.group(1).strip() if match else default
 
 
 def _generate_core_system(project_data: dict) -> str:
@@ -641,8 +645,8 @@ def _detect_usb_device(project_data: dict) -> dict:
         if 'FS' in instance:
             speed = 'FS'
 
-        if 'OTG' in instance:
-            mode = 'OTG'
+        # if 'OTG' in instance:
+        #     mode = 'OTG'
 
     return {
         "handler": f"hUsb{mode}{speed}",
@@ -676,7 +680,7 @@ def generate_xrobot_hardware_container() -> str:
         dev_type = meta["type"]
         aliases = meta["aliases"]
 
-        type_list.append(f"LibXR::Entry<LibXR::{dev_type}>")
+        type_list.append(f"    LibXR::Entry<LibXR::{dev_type}>")
 
         if not aliases:
             entry_list.append(f"  {{{dev}, {{}}}}")  # No aliases
@@ -687,19 +691,12 @@ def generate_xrobot_hardware_container() -> str:
     if not type_list:
         return "// No devices to generate HardwareContainer.\n"
 
-    return f"""\
-LibXR::HardwareContainer<
-  {",\n  ".join(type_list)}
-> peripherals{{
-{",\n".join(entry_list)}
-}};
-"""
-
+    return f"""\nLibXR::HardwareContainer<\n{',\n'.join(type_list)}\n> peripherals{{\n{",\n".join(entry_list)}\n}};\n"""
 
 # --------------------------
 # Main Generator
 # --------------------------
-def generate_full_code(project_data: dict, use_xrobot: bool, existing_code: str = "") -> str:
+def generate_full_code(project_data: dict, use_xrobot: bool, existing_code: str) -> str:
     components = [
         _generate_header_includes(use_xrobot),
         _generate_extern_declarations(project_data),
@@ -754,7 +751,12 @@ def main():
         os.makedirs(output_dir, exist_ok=True)
 
         # Generate code
-        output_code = generate_full_code(project_data, args.xrobot)
+        existing_code = ""
+        if os.path.exists(args.output):
+            with open(args.output, "r", encoding="utf-8") as f:
+                existing_code = f.read()
+
+        output_code = generate_full_code(project_data, args.xrobot, existing_code)
 
         # Write output
         with open(args.output, "w", encoding="utf-8") as f:
