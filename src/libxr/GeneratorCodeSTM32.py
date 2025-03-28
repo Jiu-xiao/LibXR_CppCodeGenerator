@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 # --------------------------
 # Global Configuration
 # --------------------------
-device_aliases = {"power_manager": ["power_manager"]}
+device_aliases = {"power_manager": {"type": "PowerManager", "aliases": ["power_manager"]}}
 libxr_settings = {
     "terminal_source": "",
     "software_timer": {"priority": 2, "stack_depth": 512},
@@ -46,19 +46,15 @@ def initialize_device_aliases(use_xrobot: bool) -> None:
     if not use_xrobot:
         return
 
-    # Load configuration from YAML
     saved_aliases = libxr_settings.get("device_aliases", {})
 
-    # Set default values
-    defaults = {
-        "power_manager": ["power_manager"],
-    }
+    # 插入默认设备
+    if "power_manager" not in saved_aliases:
+        saved_aliases["power_manager"] = {
+            "type": "PowerManager",
+            "aliases": ["power_manager"]
+        }
 
-    # Merge configuration
-    for dev, aliases in defaults.items():
-        saved_aliases.setdefault(dev, aliases)
-
-    # Update global aliases
     device_aliases.update(saved_aliases)
 
 
@@ -82,12 +78,13 @@ def parse_arguments():
 # --------------------------
 # Device Registration
 # --------------------------
-def _register_device(device_name: str) -> None:
-    """Register a device in the global alias registry with duplicate check."""
+def _register_device(name: str, dev_type: str):
     global device_aliases
-    if device_name not in device_aliases:
-        device_aliases[device_name] = [device_name]
-        logging.debug(f"Registered new device: {device_name}")
+    if name not in device_aliases:
+        device_aliases[name] = {
+            "type": dev_type,
+            "aliases": [name]
+        }
 
 
 # --------------------------
@@ -126,10 +123,27 @@ def load_configuration(file_path: str, use_xrobot: bool) -> dict:
 
             if use_xrobot:
                 if 'device_aliases' in config:
-                    libxr_settings['device_aliases'] = {
-                        k: v if isinstance(v, list) else [v]
-                        for k, v in config['device_aliases'].items()
-                    }
+                    new_aliases = {}
+                    for dev, entry in config['device_aliases'].items():
+                        if isinstance(entry, list):
+                            new_aliases[dev] = {
+                                "type": "Unknown",
+                                "aliases": entry
+                            }
+                        elif isinstance(entry, str):
+                            new_aliases[dev] = {
+                                "type": "Unknown",
+                                "aliases": [entry]
+                            }
+                        elif isinstance(entry, dict):
+                            # 兼容新版格式（已带 type 和 aliases）
+                            new_aliases[dev] = {
+                                "type": entry.get("type", "Unknown"),
+                                "aliases": entry.get("aliases", [])
+                                if isinstance(entry.get("aliases"), list)
+                                else [entry.get("aliases")]
+                            }
+                    libxr_settings['device_aliases'] = new_aliases
 
             # Basic schema validation
             required_sections = ["Mcu", "GPIO", "Peripherals"]
@@ -137,6 +151,7 @@ def load_configuration(file_path: str, use_xrobot: bool) -> dict:
                 if section not in config:
                     raise ValueError(f"Missing required section: {section}")
 
+            # Detect RTOS
             if 'FreeRTOS' in config:
                 libxr_settings['SYSTEM'] = 'FreeRTOS'
                 logging.info("Detected FreeRTOS configuration")
@@ -145,9 +160,11 @@ def load_configuration(file_path: str, use_xrobot: bool) -> dict:
             else:
                 libxr_settings['SYSTEM'] = 'None'
 
+            # Software timer config
             if 'software_timer' in config:
                 libxr_settings['software_timer'].update(config['software_timer'])
 
+            # Terminal source
             if 'terminal_source' in config:
                 libxr_settings['terminal_source'] = config['terminal_source']
 
@@ -229,7 +246,7 @@ def generate_gpio_alias(port: str, gpio_data: dict, project_data: dict) -> str:
 
     var_name = _sanitize_cpp_identifier(label or port)
 
-    _register_device(var_name)
+    _register_device(var_name, "GPIO")
 
     return f"{var_name}({port_define}, {pin_define}{irq_str})"
 
@@ -356,7 +373,7 @@ class PeripheralFactory:
         for channel in conversions:
             channels_code += f"  auto {instance.lower()}_{channel.lower()} = {instance.lower()}.GetChannel({index});\n"
             channels_code += f"  UNUSED({instance.lower()}_{channel.lower()});\n"
-            _register_device(f"{instance.lower()}_{channel.lower()}")
+            _register_device(f"{instance.lower()}_{channel.lower()}", "ADC")
             index = index + 1
 
         return ("adc", channels_code)
@@ -373,7 +390,7 @@ class PeripheralFactory:
         rx_queue = uart_config.setdefault("rx_queue_size", 5)
 
         code = f"  STM32UART {instance.lower()}(&h{instance.lower()}, {rx_buf}, {tx_buf}, {rx_queue}, {tx_queue});\n"
-        _register_device(f"{instance.lower()}")
+        _register_device(f"{instance.lower()}", "UART")
         return ("main", code)
 
     @staticmethod
@@ -381,7 +398,7 @@ class PeripheralFactory:
         """Generate I2C initialization code with dynamic buffer configuration."""
         i2c_config = libxr_settings['I2C'].setdefault(instance.lower(), {})
         dma_min_size = i2c_config.setdefault('dma_enable_min_size', 3)
-        _register_device(f"{instance.lower()}")
+        _register_device(f"{instance.lower()}", "I2C")
         return ("main",
                 f"  STM32I2C {instance.lower()}(&h{instance.lower()}, {instance.lower()}_buf, {dma_min_size});\n")
 
@@ -396,14 +413,14 @@ class PeripheralFactory:
             ch_num = ch.replace('CH', '')
             dev_name = f"pwm_{instance.lower()}_ch{ch_num}"
             code += f"  STM32PWM {dev_name}(&h{instance.lower()}, TIM_CHANNEL_{ch_num});\n"
-            _register_device(dev_name)
+            _register_device(dev_name, "PWM")
         return ("pwm", code)
 
     @staticmethod
     def _generate_canfd(instance: str, config: dict) -> tuple:
         """Generate CAN FD initialization with configurable queue size."""
         queue_size = libxr_settings['FDCAN'].get(instance, {}).get('queue_size', 5)
-        _register_device(f"{instance.lower()}")
+        _register_device(f"{instance.lower()}", "FDCAN")
         return ("main",
                 f'  STM32CANFD {instance.lower()}(&h{instance.lower()}, "{instance.lower()}", {queue_size});\n')
 
@@ -411,7 +428,7 @@ class PeripheralFactory:
     def _generate_can(instance: str, config: dict) -> tuple:
         """Generate classic CAN initialization with queue configuration."""
         queue_size = libxr_settings['CAN'].get(instance, {}).get('queue_size', 5)
-        _register_device(f"{instance.lower()}")
+        _register_device(f"{instance.lower()}", "CAN")
         return ("main",
                 f'  STM32CAN {instance.lower()}(&h{instance.lower()}, "{instance.lower()}", {queue_size});\n')
 
@@ -427,7 +444,7 @@ class PeripheralFactory:
         tx_buf = f"{instance.lower()}_tx_buf" if tx_enabled else "{nullptr, 0}"
         rx_buf = f"{instance.lower()}_rx_buf" if rx_enabled else "{nullptr, 0}"
 
-        _register_device(f"{instance.lower()}")
+        _register_device(f"{instance.lower()}", "SPI")
 
         return ("main",
                 f'  STM32SPI {instance.lower()}(&h{instance.lower()}, {rx_buf}, {tx_buf}, {dma_min_size});\n')
@@ -454,8 +471,6 @@ def _generate_header_includes(use_xrobot: bool = False) -> str:
 
     if use_xrobot:
         headers.extend([
-            '#include "peripheral_manager.hpp"',
-            '#include "application.hpp"',
             '#include "hardware_container.hpp"'
         ])
 
@@ -575,7 +590,7 @@ def configure_terminal(project_data: dict) -> str:
     else:
         if usb_info:
             code += _setup_usb(usb_info)
-            _register_device(f"{uart_devices[0].lower()}")
+            _register_device(f"{uart_devices[0].lower()}", "UART")
 
     if terminal_source != "":
         term_config = libxr_settings.setdefault("Terminal", {})
@@ -592,8 +607,8 @@ def configure_terminal(project_data: dict) -> str:
   Timer::Add(terminal_task);
   Timer::Start(terminal_task);
 """
-        _register_device("ramfs")
-        _register_device("terminal")
+        _register_device("ramfs", "RamFS")
+        _register_device("terminal", "Terminal")
     return code
 
 
@@ -604,7 +619,7 @@ def _setup_usb_terminal(usb_info: dict) -> str:
     )
 
 def _setup_usb(usb_info: dict) -> str:
-    _register_device('uart_cdc')
+    _register_device('uart_cdc', "UART")
     return (
         f"  STM32VirtualUART uart_cdc({usb_info['handler']}, "
         f"UserTxBuffer{usb_info['speed']}, UserRxBuffer{usb_info['speed']}, 5, 5);\n"
@@ -637,32 +652,48 @@ def _detect_usb_device(project_data: dict) -> dict:
 # --------------------------
 # XRobot Integration
 # --------------------------
-def generate_xrobot_integration() -> str:
+def generate_xrobot_hardware_container() -> str:
+    """
+    Generate a C++ definition for HardwareContainer using Entry<T> syntax.
+    Each device is associated with its logical aliases.
+    """
     global device_aliases
+
+    # Normalize device_aliases structure
     libxr_settings["device_aliases"] = {
-        dev: sorted(list(set(aliases)))
-        for dev, aliases in device_aliases.items()
+        dev: {
+            "type": meta.get("type", "Unknown"),
+            "aliases": sorted(set(meta.get("aliases", [])))
+        }
+        for dev, meta in device_aliases.items()
     }
 
-    entries = []
-    for dev, aliases in device_aliases.items():
-        for alias in aliases:
-            entries.append(f'    XRobot::MakeEntry({dev}, "{alias}")')
+    # Collect types (Entry<T>) and entries (device with aliases)
+    type_list = []
+    entry_list = []
 
-    return """\
-  PeripheralManager peripherals(XRobot::HardwareContainer{
-""" + ",\n".join(entries) + """
-  });
-  XRobot::ApplicationManager apps;
-  apps.InitializeAll(peripherals);
+    for dev, meta in device_aliases.items():
+        dev_type = meta["type"]
+        aliases = meta["aliases"]
 
-  /* Custom Application Registration */
-  // apps.Register(new MyCustomApp());
+        type_list.append(f"LibXR::Entry<LibXR::{dev_type}>")
 
-  while(true) {
-    apps.MonitorAll();
-    Thread::Sleep(1000);
-  }"""
+        if not aliases:
+            entry_list.append(f"  {{{dev}, {{}}}}")  # No aliases
+        else:
+            alias_str = ", ".join(f'"{alias}"' for alias in aliases)
+            entry_list.append(f"  {{{dev}, {{{alias_str}}}}}")  # With aliases
+
+    if not type_list:
+        return "// No devices to generate HardwareContainer.\n"
+
+    return f"""\
+LibXR::HardwareContainer<
+  {",\n  ".join(type_list)}
+> peripherals{{
+{",\n".join(entry_list)}
+}};
+"""
 
 
 # --------------------------
@@ -681,8 +712,9 @@ def generate_full_code(project_data: dict, use_xrobot: bool, existing_code: str 
         generate_gpio_config(project_data),
         generate_peripheral_instances(project_data),
         configure_terminal(project_data),
+        generate_xrobot_hardware_container() if use_xrobot else '',
         '  /* User Code Begin 3 */',
-        generate_xrobot_integration() if use_xrobot else preserve_user_blocks(existing_code, 3),
+        preserve_user_blocks(existing_code, 3),
         '  /* User Code End 3 */',
         '}'
     ]
