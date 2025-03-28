@@ -516,7 +516,7 @@ def _generate_extern_declarations(project_data: dict) -> str:
 def preserve_user_blocks(existing_code: str, section: int) -> str:
     """Preserve user code between protection markers with enhanced pattern matching."""
     patterns = {
-        1: (r'/\* User Code Begin 1 \*/(.*?)/\* User Code End 1 \*/', ''),
+        1: ('/\* User Code Begin 1 \*/(.*?)/\* User Code End 1 \*/', ''),
         2: (r'/\* User Code Begin 2 \*/(.*?)/\* User Code End 2 \*/', ''),
         3: (r'/\* User Code Begin 3 \*/(.*?)/\* User Code End 3 \*/',
             '  while(true) {\n    Thread::Sleep(UINT32_MAX);\n  }')
@@ -527,7 +527,10 @@ def preserve_user_blocks(existing_code: str, section: int) -> str:
 
     pattern, default = patterns[section]
     match = re.search(pattern, existing_code, re.DOTALL)
-    return '  ' + match.group(1).strip() if match else default
+    if section != 1:
+        return '  ' + match.group(1).strip() if match else default
+    else:
+        return match.group(1).strip() if match else default
 
 
 def _generate_core_system(project_data: dict) -> str:
@@ -699,12 +702,17 @@ def generate_xrobot_hardware_container() -> str:
 def generate_full_code(project_data: dict, use_xrobot: bool, existing_code: str) -> str:
     components = [
         _generate_header_includes(use_xrobot),
+        '/* User Code Begin 1 */',
+        preserve_user_blocks(existing_code, 1),
+        '/* User Code End 1 */',
         _generate_extern_declarations(project_data),
 
         generate_dma_resources(project_data),
 
         '\nextern "C" void app_main(void) {',
+        '  /* User Code Begin 2 */',
         preserve_user_blocks(existing_code, 2),
+        '  /* User Code End 2 */',
         _generate_core_system(project_data),
         generate_gpio_config(project_data),
         generate_peripheral_instances(project_data),
