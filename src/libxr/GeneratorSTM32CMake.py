@@ -40,8 +40,12 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     xr
 )
 
+file(
+  GLOB LIBXR_USER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
+
+
 target_sources(${CMAKE_PROJECT_NAME}
-    PRIVATE User/app_main.cpp
+    PRIVATE ${LIBXR_USER_SOURCES}
 )
 '''
 )
