@@ -50,6 +50,14 @@ CMakeFiles/**
 
 def add_libxr(project_dir):
     libxr_path = os.path.join(project_dir, "Middlewares", "Third_Party", "LibXR")
+    midware_path = os.path.join(project_dir, "Middlewares")
+    third_party_path = os.path.join(midware_path, "Third_Party")
+    if not os.path.exists(midware_path):
+        logging.info("Creating Middleware folder...")
+        os.makedirs(midware_path)
+    if not os.path.exists(third_party_path):
+        logging.info("Creating Third Party folder...")
+        os.makedirs(third_party_path)
     
     if not is_git_repo(project_dir):
         logging.warning(f"{project_dir} is not a Git repository. Initializing...")

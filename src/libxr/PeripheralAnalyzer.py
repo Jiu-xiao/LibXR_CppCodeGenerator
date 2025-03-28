@@ -329,7 +329,7 @@ class USARTParser(PeripheralParser):
 
     def parse(self, p_type: str) -> None:
         for key, value in self.raw_map.items():
-            if not key.startswith(("USART", "UART")):
+            if not key.startswith(("USART", "UART", "LPUART")):
                 continue
 
             parts = key.split(".")

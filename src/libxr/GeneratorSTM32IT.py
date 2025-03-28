@@ -15,8 +15,10 @@ def modify_interrupt_file(file_path):
     extern_declaration = """#ifdef HAL_UART_MODULE_ENABLED
 extern void STM32_UART_ISR_Handler_IDLE(UART_HandleTypeDef *huart);
 #endif"""
-    callback_template = "  STM32_UART_ISR_Handler_IDLE(&huart{});\n"
+    callback_template = "  STM32_UART_ISR_Handler_IDLE(&{var});\n"
+
     modified = False
+    modified_functions = []
 
     # Check if extern declaration exists
     if extern_declaration not in "".join(content):
@@ -27,33 +29,43 @@ extern void STM32_UART_ISR_Handler_IDLE(UART_HandleTypeDef *huart);
                 break
 
     # Match USART/UART IRQ handlers
-    pattern = re.compile(r'void\s+(USART\d+|UART\d+)_IRQHandler\s*\(\s*void\s*\)', re.IGNORECASE)
+    pattern_irq = re.compile(r'void\s+([A-Z0-9_]+)_IRQHandler\s*\(\s*void\s*\)')
+    pattern_handler = re.compile(r'HAL_UART_IRQHandler\(\s*&(\w+)\s*\)')
 
-    for i, line in enumerate(content):
-        match = pattern.search(line)
+    i = 0
+    while i < len(content):
+        match = pattern_irq.search(content[i])
         if match:
-            usart = match.group(1)
-            uart_number = re.search(r'\d+', usart).group()  # Extract UART number
+            irq_func_name = match.group(1)
 
-            # Find USER CODE BEGIN block
-            user_code_begin_pattern = re.compile(rf'/\*\s*USER CODE BEGIN {usart}_IRQn 1\s*\*/')
+            # Find HAL_UART_IRQHandler
+            huart_var = None
             for j in range(i, len(content)):
-                if user_code_begin_pattern.search(content[j]):
-                    # Check if callback already exists
-                    callback_call = callback_template.format(uart_number).strip()
-                    if callback_call not in "".join(content[j:j + 5]):
-                        # Insert callback after USER CODE BEGIN
-                        content.insert(j + 1, callback_template.format(uart_number))
-                        modified = True
+                if pattern_irq.search(content[j]) and j != i:
+                    break
+                handler_match = pattern_handler.search(content[j])
+                if handler_match:
+                    huart_var = handler_match.group(1)  # e.g., huart1
                     break
 
-    # Write back only if modified
-    modified_functions = []
+            # Insert callback to USER CODE BEGIN ... IRQn 1 block
+            if huart_var:
+                user_code_begin_pattern = re.compile(rf'/\*\s*USER CODE BEGIN {irq_func_name}_IRQn 1\s*\*/')
+                for k in range(i, len(content)):
+                    if user_code_begin_pattern.search(content[k]):
+                        callback_call = callback_template.format(var=huart_var)
+                        if callback_call.strip() not in "".join(content[k:k+5]):
+                            content.insert(k + 1, callback_call)
+                            modified = True
+                            modified_functions.append(irq_func_name)
+                        break
+        i += 1
 
+    # Write back only if modified
     if modified:
         with open(file_path, "w", encoding="utf-8") as f:
             f.writelines(content)
-        logging.info(f"Modified {file_path}: Inserted callbacks for {modified_functions}")
+        logging.info(f"Modified {file_path}: Inserted callbacks for {', '.join(modified_functions)}")
     else:
         logging.info(f"No changes needed in {file_path}.")
 

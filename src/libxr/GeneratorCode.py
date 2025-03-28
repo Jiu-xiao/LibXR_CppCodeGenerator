@@ -209,6 +209,9 @@ def _deep_merge(base: dict, update: dict) -> dict:
 # --------------------------
 # GPIO Configuration
 # --------------------------
+def _sanitize_cpp_identifier(name: str) -> str:
+    return re.sub(r'\W|^(?=\d)', '_', name)
+
 def generate_gpio_alias(port: str, gpio_data: dict, project_data: dict) -> str:
     base_port = port.split("-")[0]
     port_define = f"GPIO{base_port[1]}"
@@ -220,18 +223,28 @@ def generate_gpio_alias(port: str, gpio_data: dict, project_data: dict) -> str:
         port_define = f"{label}_GPIO_Port"
         pin_define = f"{label}_Pin"
 
-    irq_define = _get_exti_irq(pin_num, gpio_data.get("GPXTI", False),
+    irq_define = _get_exti_irq(pin_num, base_port, gpio_data.get("GPXTI", False),
                                project_data.get("Mcu", {}).get("Family", "STM32F4"))
     irq_str = f", {irq_define}" if irq_define else ""
 
-    return f"{label or port}({port_define}, {pin_define}{irq_str})"
+    var_name = _sanitize_cpp_identifier(label or port)
+
+    _register_device(var_name)
+
+    return f"{var_name}({port_define}, {pin_define}{irq_str})"
 
 
-def _get_exti_irq(pin_num: int, is_exti: bool, mcu_family: str) -> str:
+def _get_exti_irq(pin_num: int, port: str, is_exti: bool, mcu_family: str) -> str:
     if not is_exti:
         return ""
 
-    if mcu_family == "STM32F0":
+    if mcu_family.startswith("STM32WB0"):
+        if port.startswith("PA"):
+            return "GPIOA_IRQn"
+        elif port.startswith("PB"):
+            return "GPIOB_IRQn"
+
+    if mcu_family == "STM32F0" or mcu_family == 'STM32G0' or mcu_family == 'STM32L0':
         if pin_num <= 1: return "EXTI0_1_IRQn"
         if pin_num <= 3: return "EXTI2_3_IRQn"
         return "EXTI4_15_IRQn"
@@ -263,7 +276,7 @@ def generate_dma_resources(project_data: dict) -> str:
         if p_type_base not in libxr_settings:
             libxr_settings[p_type_base] = {}
 
-        if p_type_base in ["SPI", "USART", "UART"]:
+        if p_type_base in ["SPI", "USART", "UART", "LPUART"]:
             for instance, config in instances.items():
                 dma_tx = config.get("DMA_TX", "DISABLE") == "ENABLE"
                 dma_rx = config.get("DMA_RX", "DISABLE") == "ENABLE"
@@ -320,6 +333,7 @@ class PeripheralFactory:
             "SPI": PeripheralFactory._generate_spi,
             "USART": PeripheralFactory._generate_uart,
             "UART": PeripheralFactory._generate_uart,
+            "LPUART": PeripheralFactory._generate_uart,
             "I2C": PeripheralFactory._generate_i2c
         }
         generator = handler_map.get(p_type.upper())
@@ -474,7 +488,7 @@ def _generate_extern_declarations(project_data: dict) -> str:
                     externs.add(f'extern uint8_t UserTxBuffer{usb_info['speed']}[APP_TX_DATA_SIZE];')
                     externs.add(f'extern uint8_t UserRxBuffer{usb_info['speed']}[APP_RX_DATA_SIZE];')
             else:
-                handle_type = 'UART_HandleTypeDef' if p_type in ['USART', 'UART'] else f'{p_type}_HandleTypeDef'
+                handle_type = 'UART_HandleTypeDef' if p_type in ['USART', 'UART', 'LPUART'] else f'{p_type}_HandleTypeDef'
                 externs.add(f'extern {handle_type} h{instance.lower()};')
 
     return '/* External HAL Declarations */\n' + '\n'.join(sorted(externs)) + '\n'
@@ -544,12 +558,12 @@ def configure_terminal(project_data: dict) -> str:
     terminal_source = libxr_settings.get("terminal_source", "").lower()
     usb_info = _detect_usb_device(project_data)
     uart_devices = list(project_data.get("Peripherals", {}).get("USART", {}).keys())
-
-    print(usb_info)
-
     # User-specified terminal source
-    if terminal_source:
+    if terminal_source != "":
+        print("terminal source:", terminal_source)
         if terminal_source == "usb" and usb_info:
+            print("123")
+            code += _setup_usb(usb_info)
             code += _setup_usb_terminal(usb_info)
         elif terminal_source in [d.lower() for d in uart_devices]:
             dev = terminal_source.upper()
@@ -560,10 +574,10 @@ def configure_terminal(project_data: dict) -> str:
             logging.warning(f"Invalid terminal_source: {terminal_source}")
     else:
         if usb_info:
-            code += _setup_usb_terminal(usb_info)
+            code += _setup_usb(usb_info)
             _register_device(f"{uart_devices[0].lower()}")
 
-    if code:
+    if terminal_source != "":
         term_config = libxr_settings.setdefault("Terminal", {})
         params = [
             term_config.setdefault("READ_BUFF_SIZE", 32),
@@ -584,20 +598,28 @@ def configure_terminal(project_data: dict) -> str:
 
 
 def _setup_usb_terminal(usb_info: dict) -> str:
-    _register_device('uart_cdc')
     return (
-        f"  STM32VirtualUART uart_cdc({usb_info['handler']}, "
-        f"UserTxBuffer{usb_info['speed']}, UserRxBuffer{usb_info['speed']}, 5, 5);\n"
         "  STDIO::read_ = &uart_cdc.read_port_;\n"
         "  STDIO::write_ = &uart_cdc.write_port_;\n"
     )
 
+def _setup_usb(usb_info: dict) -> str:
+    _register_device('uart_cdc')
+    return (
+        f"  STM32VirtualUART uart_cdc({usb_info['handler']}, "
+        f"UserTxBuffer{usb_info['speed']}, UserRxBuffer{usb_info['speed']}, 5, 5);\n"
+    )
+
 
 def _detect_usb_device(project_data: dict) -> dict:
-    speed = None
+    usb_config = project_data.get("Peripherals", {}).get("USB", {})
+    if not usb_config:
+        return None
+
+    speed = 'FS'
     mode = "Device"
+
     for instance, config in project_data.get("Peripherals", {}).get("USB", {}).items():
-        print(instance, config)
         if 'HS' in instance:
             speed = 'HS'
 
@@ -606,9 +628,6 @@ def _detect_usb_device(project_data: dict) -> dict:
 
         if 'OTG' in instance:
             mode = 'OTG'
-
-    if speed == None:
-        return None
 
     return {
         "handler": f"hUsb{mode}{speed}",
