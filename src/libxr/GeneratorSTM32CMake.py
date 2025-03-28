@@ -2,6 +2,7 @@
 import argparse
 import os
 import logging
+import shutil
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
@@ -57,6 +58,12 @@ def main():
     if not os.path.isdir(input_directory):
         print("Input directory does not exist.")
         exit(1)
+
+    build_path = os.path.join(input_directory, "build")
+    if os.path.exists(build_path) and os.path.isdir(build_path):
+        logging.info("Removing existing 'build' directory...")
+        shutil.rmtree(build_path)
+        logging.info("'build' directory removed.")
 
     file_path = os.path.join(input_directory, "cmake", "LibXR.CMake")
 
