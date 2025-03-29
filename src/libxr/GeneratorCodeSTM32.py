@@ -6,7 +6,7 @@ import logging
 import os
 import re
 import sys
-
+import urllib.request
 import yaml
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
@@ -72,6 +72,8 @@ def parse_arguments():
                         help="Output C++ file path")
     parser.add_argument("--xrobot", action="store_true",
                         help="Enable XRobot framework integration")
+    parser.add_argument("--libxr-config", default="",
+                        help="Optional path or URL to libxr_config.yaml")
     return parser.parse_args()
 
 
@@ -183,10 +185,26 @@ def load_configuration(file_path: str, use_xrobot: bool) -> dict:
 # --------------------------
 # Library Configuration
 # --------------------------
-def load_libxr_config(output_dir: str) -> None:
+def load_libxr_config(output_dir: str, config_source: str) -> None:
     """Load or create library configuration with version compatibility check."""
     global libxr_settings
     config_path = os.path.join(output_dir, "libxr_config.yaml")
+
+    if config_source:
+        try:
+            if config_source.startswith("http://") or config_source.startswith("https://"):
+                logging.info(f"Downloading libxr_config.yaml from {config_source}")
+                with urllib.request.urlopen(config_source) as response:
+                    libxr_settings.update(yaml.safe_load(response.read().decode()))
+            elif os.path.exists(config_source):
+                logging.info(f"Using external libxr_config.yaml from {config_source}")
+                with open(config_source, "r", encoding="utf-8") as f:
+                    libxr_settings.update(yaml.safe_load(f))
+            else:
+                logging.warning(f"Cannot locate config source: {config_source}")
+        except Exception as e:
+            logging.warning(f"Failed to load external config: {e}")
+        return
 
     try:
         if os.path.exists(config_path):
@@ -472,7 +490,8 @@ def _generate_header_includes(use_xrobot: bool = False) -> str:
 
     if use_xrobot:
         headers.extend([
-            '#include "hardware_container.hpp"'
+            '#include "app_framework.hpp"\n'
+            '#include "xrobot_main.hpp"'
         ])
 
     return '\n'.join(headers) + '\n\nusing namespace LibXR;\n'
@@ -516,7 +535,7 @@ def _generate_extern_declarations(project_data: dict) -> str:
 def preserve_user_blocks(existing_code: str, section: int) -> str:
     """Preserve user code between protection markers with enhanced pattern matching."""
     patterns = {
-        1: ('/\* User Code Begin 1 \*/(.*?)/\* User Code End 1 \*/', ''),
+        1: (r'/\* User Code Begin 1 \*/(.*?)/\* User Code End 1 \*/', ''),
         2: (r'/\* User Code Begin 2 \*/(.*?)/\* User Code End 2 \*/', ''),
         3: (r'/\* User Code Begin 3 \*/(.*?)/\* User Code End 3 \*/',
             '  while(true) {\n    Thread::Sleep(UINT32_MAX);\n  }')
@@ -582,9 +601,7 @@ def configure_terminal(project_data: dict) -> str:
     uart_devices = list(project_data.get("Peripherals", {}).get("USART", {}).keys())
     # User-specified terminal source
     if terminal_source != "":
-        print("terminal source:", terminal_source)
         if terminal_source == "usb" and usb_info:
-            print("123")
             code += _setup_usb(usb_info)
             code += _setup_usb_terminal(usb_info)
         elif terminal_source in [d.lower() for d in uart_devices]:
@@ -615,7 +632,7 @@ def configure_terminal(project_data: dict) -> str:
   Timer::Start(terminal_task);
 """
         _register_device("ramfs", "RamFS")
-        _register_device("terminal", "Terminal")
+        _register_device("terminal", f"Terminal<{', '.join(map(str, params))}>")
     return code
 
 
@@ -694,7 +711,7 @@ def generate_xrobot_hardware_container() -> str:
     if not type_list:
         return "// No devices to generate HardwareContainer.\n"
 
-    return f"""\nLibXR::HardwareContainer<\n{',\n'.join(type_list)}\n> peripherals{{\n{",\n".join(entry_list)}\n}};\n"""
+    return f"""\n  LibXR::HardwareContainer<\n{',\n'.join(type_list)}\n> peripherals{{\n{",\n".join(entry_list)}\n}};\n"""
 
 # --------------------------
 # Main Generator
@@ -718,6 +735,7 @@ def generate_full_code(project_data: dict, use_xrobot: bool, existing_code: str)
         generate_peripheral_instances(project_data),
         configure_terminal(project_data),
         generate_xrobot_hardware_container() if use_xrobot else '',
+        '  XRobotMain(peripherals);\n' if use_xrobot else '',
         '  /* User Code Begin 3 */',
         preserve_user_blocks(existing_code, 3),
         '  /* User Code End 3 */',
@@ -752,7 +770,7 @@ def main():
 
         # Load configurations
         project_data = load_configuration(args.input, args.xrobot)
-        load_libxr_config(os.path.dirname(args.output))
+        load_libxr_config(os.path.dirname(args.output), args.libxr_config)
         initialize_device_aliases(args.xrobot)
 
         output_dir = os.path.dirname(args.output)
