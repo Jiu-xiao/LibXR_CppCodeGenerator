@@ -734,6 +734,13 @@ def parse_ioc_file(ioc_path: str) -> Optional[Dict[str, Any]]:
         logging.error(f"File processing failed: {str(e)}")
         return None
 
+    # Timebase special fields parsing
+    for key, value in raw_map.items():
+        if key.startswith("NVIC.TimeBaseIP"):
+            config.timebase["Source"] = value
+        elif key.startswith("NVIC.TimeBase"):
+            config.timebase["IRQ"] = value
+
     # Instantiate all parsers
     parsers = [
         FreeRTOSParser(config, raw_map),
