@@ -187,6 +187,18 @@ class TIMParser(PeripheralParser):
 
             if "Channel-PWM" in key:
                 self._handle_pwm_channel(tim_name, parts, value)
+            elif parts[1] == "Channel":
+                # Simplified format like TIM10.Channel → TIM_CHANNEL_1
+                channel_id = value.strip()
+                if re.match(r"^TIM_CHANNEL_\d+$", channel_id):
+                    ch_num = channel_id.split("_")[-1]
+                    ch_name = f"CH{ch_num}"
+                    pin_label = self._get_associated_pin_label(tim_name)
+
+                    self.config.peripherals["TIM"][tim_name]["Channels"][ch_name] = {
+                        "Label": pin_label,
+                        "PWM": True
+                    }
             elif "Period" in parts[1]:
                 self.config.peripherals[p_type][tim_name]["Period"] = sanitize_numeric(value)
             elif "Prescaler" in parts[1]:
