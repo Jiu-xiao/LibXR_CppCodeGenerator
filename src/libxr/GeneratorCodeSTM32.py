@@ -537,8 +537,7 @@ def preserve_user_blocks(existing_code: str, section: int) -> str:
     patterns = {
         1: (r'/\* User Code Begin 1 \*/(.*?)/\* User Code End 1 \*/', ''),
         2: (r'/\* User Code Begin 2 \*/(.*?)/\* User Code End 2 \*/', ''),
-        3: (r'/\* User Code Begin 3 \*/(.*?)/\* User Code End 3 \*/',
-            '  while(true) {\n    Thread::Sleep(UINT32_MAX);\n  }')
+        3: (r'/\* User Code Begin 3 \*/(.*?)/\* User Code End 3 \*/', ''),
     }
 
     if section not in patterns:
@@ -711,12 +710,13 @@ def generate_xrobot_hardware_container() -> str:
     if not type_list:
         return "// No devices to generate HardwareContainer.\n"
 
-    return f"""\n  LibXR::HardwareContainer<\n{',\n'.join(type_list)}\n> peripherals{{\n{",\n".join(entry_list)}\n}};\n"""
+    return f"""\n  LibXR::HardwareContainer<\n{',\n'.join(type_list)}\n  > peripherals{{\n  {",\n  ".join(entry_list)}\n  }};\n"""
 
 # --------------------------
 # Main Generator
 # --------------------------
 def generate_full_code(project_data: dict, use_xrobot: bool, existing_code: str) -> str:
+    user_code_def_3 = '  XRobotMain(peripherals);\n' if use_xrobot else f"  while(true) {{\n    Thread::Sleep(UINT32_MAX);\n  }}\n"
     components = [
         _generate_header_includes(use_xrobot),
         '/* User Code Begin 1 */',
@@ -735,8 +735,8 @@ def generate_full_code(project_data: dict, use_xrobot: bool, existing_code: str)
         generate_peripheral_instances(project_data),
         configure_terminal(project_data),
         generate_xrobot_hardware_container() if use_xrobot else '',
-        '  XRobotMain(peripherals);\n' if use_xrobot else '',
         '  /* User Code Begin 3 */',
+        user_code_def_3 if preserve_user_blocks(existing_code, 3) == '' else '',
         preserve_user_blocks(existing_code, 3),
         '  /* User Code End 3 */',
         '}'
