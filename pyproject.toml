@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "libxr"
-version = "0.2.1"
-description = "A Python package for parsing IOC files and generating C++ code."
+version = "0.2.2"
+description = "C++ code generator for LibXR-based embedded systems, supporting STM32 and modular robotics applications."
 requires-python = ">=3.8"
 authors = [
     {name = "Xiao", email = "2592509183@qq.com"}
