@@ -348,8 +348,10 @@ def generate_dma_resources(project_data: dict) -> str:
                     "buffer_size",
                     DMA_DEFAULT_SIZES[p_type_base]["buffer"]
                 )
-
-                dma_code.append(f"static uint8_t {instance_lower}_buf[{buf_size}];")
+                if p_type_base in ["ADC"]:
+                    dma_code.append(f"static uint16_t {instance_lower}_buf[{int(buf_size/2)}];")
+                else:
+                    dma_code.append(f"static uint8_t {instance_lower}_buf[{buf_size}];")
 
     return "/* DMA Resources */\n" + "\n".join(dma_code) if dma_code else ""
 
