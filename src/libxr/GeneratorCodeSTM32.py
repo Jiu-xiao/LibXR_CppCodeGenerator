@@ -474,7 +474,7 @@ class PeripheralFactory:
 def _generate_header_includes(use_xrobot: bool = False) -> str:
     """Generate essential header inclusions with optional XRobot components."""
     headers = [
-        '#include "app_main.h"',
+        '#include "app_main.h"\n',
         '#include "libxr.hpp"',
         '#include "main.h"',
         '#include "stm32_adc.hpp"',
@@ -493,7 +493,8 @@ def _generate_header_includes(use_xrobot: bool = False) -> str:
     if use_xrobot:
         headers.extend([
             '#include "app_framework.hpp"\n'
-            '#include "xrobot_main.hpp"'
+            '#include "xrobot_main.hpp"\n'
+            '#include "flash_map.hpp"'
         ])
 
     return '\n'.join(headers) + '\n\nusing namespace LibXR;\n'
@@ -766,6 +767,70 @@ void app_main(void);
         logging.info(f"Generated header: {header_path}")
 
 
+def generate_flash_map_cpp(flash_info: dict) -> str:
+    """
+    Convert flash_info dictionary to a C++ constexpr struct array.
+
+    :param flash_info: Output from flash_info_to_dict
+
+    :return: C++ code as a string
+    """
+    lines = [
+        "#include \"stm32_flash.hpp\"",
+        "",
+        "constexpr LibXR::FlashSector FLASH_SECTORS[] = {",
+    ]
+
+    for s in flash_info["sectors"]:
+        index = s["index"]
+        address = int(s["address"], 16)
+        size_kb = int(s["size_kb"])
+        lines.append(f"  {{0x{address:08X}, 0x{(size_kb * 1024):08X}}},")
+
+    lines.append("};\n")
+    lines.append("constexpr size_t FLASH_SECTOR_NUMBER = sizeof(FLASH_SECTORS) / sizeof(LibXR::FlashSector);")
+    return "\n".join(lines)
+
+def inject_flash_layout(project_data: dict, output_dir: str) -> None:
+    """
+    Automatically generate FlashLayout from project_data['Mcu']['Type']
+    and inject it into libxr_settings. Also generates flash_map.hpp.
+
+    :param project_data: Project configuration containing MCU type
+
+    :param output_dir: Output directory for generated flash_map.hpp
+    """
+    try:
+        from libxr.STM32FlashGenerator import layout_flash, flash_info_to_dict
+        mcu_model = project_data.get("Mcu", {}).get("Type", "").strip()
+        if not mcu_model:
+            logging.warning("Cannot find MCU name, skipping FlashLayout generation")
+            return
+
+        flash_info = layout_flash(mcu_model)
+        flash_dict = flash_info_to_dict(flash_info)
+        libxr_settings["FlashLayout"] = flash_dict
+        logging.info(f"FlashLayout is generated and injected, MCU: {mcu_model}")
+
+        cpp_code = generate_flash_map_cpp(flash_dict)
+        if output_dir:
+            hpp_path = os.path.join(output_dir, "flash_map.hpp")
+            with open(hpp_path, "w", encoding="utf-8") as f:
+                f.write(f"""#pragma once
+// Auto-generated Flash Layout Map
+// MCU: {mcu_model}
+
+#include "main.h"
+
+""")
+                f.write(cpp_code)
+            logging.info(f"Flash layout map written to: {hpp_path}")
+    except ImportError as e:
+        logging.warning(f"Cannot import FlashLayout generator: {e}")
+    except Exception as e:
+        logging.warning(f"Cannot generate FlashLayout: {e}")
+
+
 def main():
     try:
         args = parse_arguments()
@@ -789,6 +854,8 @@ def main():
         # Write output
         with open(args.output, "w", encoding="utf-8") as f:
             f.write(output_code)
+
+        inject_flash_layout(project_data, output_dir)
 
         config_path = os.path.join(output_dir, "libxr_config.yaml")
 
