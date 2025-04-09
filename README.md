@@ -205,8 +205,53 @@ usage: xr_gen_code_stm32 [-h] -i INPUT -o OUTPUT [--xrobot] [--libxr-config LIBX
   Main entry point with all initialization logic
 
 - `libxr_config.yaml`：  
-  运行时配置文件，可自定义缓冲区大小、队列等参数
+  运行时配置文件，可自定义缓冲区大小、队列等参数  
   Runtime config YAML, can be customized with buffer size, queue, etc.
+
+- `flash_map.hpp`：  
+  自动生成的 Flash 扇区表，供 Flash 抽象层使用  
+  Auto-generated flash sector layout for use with Flash abstraction layer
+
+---
+
+### `xr_stm32_flash`
+
+解析 STM32 型号，生成 Flash 扇区信息表（YAML 格式输出）。  
+Parses STM32 model name and generates flash layout info (YAML output).
+
+```bash
+usage: xr_stm32_flash <STM32_MODEL>
+```
+
+### 🧠 功能说明 (Functionality)
+
+- 根据 STM32 型号名称自动推导 Flash 大小  
+  Automatically infers flash size from the STM32 model string
+
+- 根据芯片系列（如 F1/F4/H7/U5 等）生成对应的扇区布局  
+  Generates sector layout depending on the chip series (e.g., F1/F4/H7/U5)
+
+- 输出包括每个扇区的地址、大小和索引  
+  Output includes address, size, and index of each sector
+
+### 📦 输出内容 (Outputs)
+
+- YAML 格式的 Flash 信息  
+  Flash info in YAML format:
+
+```yaml
+model: STM32F103C8
+flash_base: '0x08000000'
+flash_size_kb: 64
+sectors:
+- index: 0
+  address: '0x08000000'
+  size_kb: 1.0
+- index: 1
+  address: '0x08000400'
+  size_kb: 1.0
+  ...
+```
 
 ---
 
