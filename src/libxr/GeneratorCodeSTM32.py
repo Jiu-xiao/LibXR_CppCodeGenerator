@@ -487,14 +487,14 @@ def _generate_header_includes(use_xrobot: bool = False) -> str:
         '#include "stm32_spi.hpp"',
         '#include "stm32_timebase.hpp"',
         '#include "stm32_uart.hpp"',
-        '#include "stm32_usb.hpp"'
+        '#include "stm32_usb.hpp"',
+        '#include "flash_map.hpp"'
     ]
 
     if use_xrobot:
         headers.extend([
             '#include "app_framework.hpp"\n'
             '#include "xrobot_main.hpp"\n'
-            '#include "flash_map.hpp"'
         ])
 
     return '\n'.join(headers) + '\n\nusing namespace LibXR;\n'
