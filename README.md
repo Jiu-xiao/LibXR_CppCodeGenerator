@@ -29,6 +29,27 @@
 
 ## 📥 Installation 安装
 
+### 使用pipx安装 (Install via `pipx`)
+
+windows
+
+```ps
+python -m pip install --user pipx
+python -m pipx ensurepath
+pipx install libxr
+pipx ensurepath
+# Restart your terminal
+```
+
+linux
+
+```bash
+sudo apt install pipx
+pipx install libxr
+pipx ensurepath
+# Restart your terminal
+```
+
 ### 使用 pip 安装 (Install via `pip`)
 
 ```bash
