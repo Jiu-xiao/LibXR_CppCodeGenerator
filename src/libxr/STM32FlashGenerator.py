@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from typing import Optional, List
 import sys
 import traceback
-import pandas as pd
 import yaml
 
 
