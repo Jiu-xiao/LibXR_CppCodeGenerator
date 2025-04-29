@@ -49,7 +49,7 @@ class ConfigurationManager:
         self.freertos_config: Dict[str, Any] = {
             "Tasks": {},
             "Heap": None,
-            "Features": {}
+            "Features": {},
         }
         self.timebase: Dict[str, Optional[str]] = {"Source": "SysTick", "IRQ": None}
         self.mcu_config: Dict[str, Optional[str]] = {"Family": None, "Type": None}
@@ -61,21 +61,24 @@ class ConfigurationManager:
             "Peripherals": self._clean_peripherals(),
             "DMA": {
                 "Requests": self.dma_requests,
-                "Configurations": self._clean_dma_configs()
+                "Configurations": self._clean_dma_configs(),
             },
             "Timebase": self.timebase,
-            "Mcu": self.mcu_config
+            "Mcu": self.mcu_config,
         }
 
         # Conditionally add FreeRTOS section
         cleaned_freertos = self._clean_freertos()
-        if any([cleaned_freertos["Tasks"],
-                cleaned_freertos["Heap"] is not None,
-                cleaned_freertos["Features"]]):
+        if any(
+                [
+                    cleaned_freertos["Tasks"],
+                    cleaned_freertos["Heap"] is not None,
+                    cleaned_freertos["Features"],
+                ]
+        ):
             cleaned_data["FreeRTOS"] = cleaned_freertos
 
         return cleaned_data
-
 
     def _clean_gpio(self) -> Dict[str, Dict]:
         return {
@@ -85,13 +88,15 @@ class ConfigurationManager:
         }
 
     def _is_valid_gpio(self, config: Dict) -> bool:
-        return config.get("Signal") in {"GPIO_Output", "GPIO_Input"} or \
-            config.get("Signal", "").startswith("GPXTI")
+        return config.get("Signal") in {"GPIO_Output", "GPIO_Input"} or config.get(
+            "Signal", ""
+        ).startswith("GPXTI")
 
     def _clean_peripherals(self) -> Dict[str, Dict]:
         return {
-            p_type: {p: self._clean_peripheral_config(cfg)
-                     for p, cfg in p_group.items()}
+            p_type: {
+                p: self._clean_peripheral_config(cfg) for p, cfg in p_group.items()
+            }
             for p_type, p_group in self.peripherals.items()
         }
 
@@ -109,7 +114,7 @@ class ConfigurationManager:
                 feat.replace("INCLUDE_", "")
                 for feat, enabled in self.freertos_config["Features"].items()
                 if enabled
-            ]
+            ],
         }
 
 
@@ -123,7 +128,9 @@ class PeripheralParser:
             self,
             config: ConfigurationManager,
             raw_map: Dict[str, str],
-            gpio_pattern: Pattern = re.compile(r"^(P[A-I]\d+(?:-[\w]+)*)\.(Signal|GPIO_Label|GPIO_PuPd)")
+            gpio_pattern: Pattern = re.compile(
+                r"^(P[A-I]\d+(?:-[\w]+)*)\.(Signal|GPIO_Label|GPIO_PuPd)"
+            ),
     ) -> None:
         self.config = config
         self.raw_map = raw_map
@@ -197,12 +204,16 @@ class TIMParser(PeripheralParser):
 
                     self.config.peripherals["TIM"][tim_name]["Channels"][ch_name] = {
                         "Label": pin_label,
-                        "PWM": True
+                        "PWM": True,
                     }
             elif "Period" in parts[1]:
-                self.config.peripherals[p_type][tim_name]["Period"] = sanitize_numeric(value)
+                self.config.peripherals[p_type][tim_name]["Period"] = sanitize_numeric(
+                    value
+                )
             elif "Prescaler" in parts[1]:
-                self.config.peripherals[p_type][tim_name]["Prescaler"] = sanitize_numeric(value)
+                self.config.peripherals[p_type][tim_name]["Prescaler"] = (
+                    sanitize_numeric(value)
+                )
             elif "Mode" in parts[1]:
                 self.config.peripherals[p_type][tim_name]["Mode"] = value
 
@@ -215,7 +226,7 @@ class TIMParser(PeripheralParser):
                 "Period": None,
                 "Prescaler": None,
                 "Channels": {},
-                "Pulses": {}
+                "Pulses": {},
             }
 
     def _handle_pwm_channel(self, tim_name: str, parts: list, value: str) -> None:
@@ -228,7 +239,7 @@ class TIMParser(PeripheralParser):
             self.config.peripherals["TIM"][tim_name]["Channels"][channel_id] = {
                 "Label": pin_label,
                 "PWM": True,
-                "DutyCycle": sanitize_numeric(value) if value.isdigit() else None
+                "DutyCycle": sanitize_numeric(value) if value.isdigit() else None,
             }
 
     def _get_associated_pin_label(self, timer_pin: str) -> str:
@@ -240,60 +251,133 @@ class TIMParser(PeripheralParser):
 # ADC Parser
 # --------------------------
 class ADCParser(PeripheralParser):
-    """Parse ADC configurations with strict channel validation."""
+    """Parse ADC configurations with strict validation and multi-source support."""
 
-    # Regular expression to match valid ADC channels (e.g. ADC_CHANNEL_0)
-    _CHANNEL_PATTERN = re.compile(r"^ADC_CHANNEL_[\w]+$")
+    _CHANNEL_PATTERN = re.compile(r"^ADC_CHANNEL_[A-Z0-9_]+$")
 
     def parse(self, p_type: str) -> None:
-        """Process ADC configurations with enhanced validation."""
         for key, value in self.raw_map.items():
-            if not key.startswith("ADC"):
-                continue
+            if key.startswith("ADC"):
+                self._parse_adc_property(key, value)
+            elif key.startswith("VP_") and key.endswith(".Signal"):
+                self._parse_vp_adc_signal(key, value)
 
-            parts = key.split(".")
-            adc_name = parts[0]
-            self._ensure_adc_instance(adc_name)
+        self._deduplicate_channels()
 
-            if "ChannelRegularConversion" in key:
-                self._process_conversion_entry(adc_name, value)
-            elif "ContinuousConvMode" in parts[1]:
-                self.config.peripherals["ADC"][adc_name]["ContinuousMode"] = value == "ENABLE"
-            elif "DMARegular" in parts[1]:
-                self.config.peripherals["ADC"][adc_name]["DMA"] = value
+    def _map_internal_channel(self, value: str) -> Optional[str]:
+        """Dynamic rule-based mapping for internal ADC channels."""
+        family = (self.config.mcu_config.get("Family") or "").upper()
 
-    def _ensure_adc_instance(self, adc_name: str) -> None:
-        """Initialize ADC instance with cleaned structure."""
-        if adc_name not in self.config.peripherals["ADC"]:
-            self.config.peripherals["ADC"][adc_name] = {
-                "ContinuousMode": False,
-                "RegularConversions": [],
-                "Channels": [],
-                "DMA": "DISABLE"
-            }
+        if "TempSens" in value:
+            match = re.search(r"ADC(\d+)_TempSens_Input", value)
+            if match:
+                adc_num = match.group(1)
+                if family.startswith(("STM32G4", "STM32H7", "STM32H5", "STM32MP1")):
+                    return f"ADC_CHANNEL_TEMPSENSOR_ADC{adc_num}"
+                else:
+                    return "ADC_CHANNEL_TEMPSENSOR"
+            return "ADC_CHANNEL_TEMPSENSOR"
+
+        if "Vref" in value:
+            return "ADC_CHANNEL_VREFINT"
+
+        if "Vbat" in value:
+            return "ADC_CHANNEL_VBAT"
+
+        if "OPAMP" in value:
+            match = re.search(r"OPAMP(\d+)", value)
+            if match:
+                opamp_num = match.group(1)
+                return f"ADC_CHANNEL_VOPAMP{opamp_num}"
+
+        return None
+
+    def _parse_adc_property(self, key: str, value: str) -> None:
+        parts = key.split(".")
+        if len(parts) < 2:
+            return
+
+        adc_name = parts[0]
+        setting = parts[1]
+        self._ensure_adc_instance(adc_name)
+
+        if "ChannelRegularConversion" in setting:
+            self._process_conversion_entry(adc_name, value)
+        elif setting == "ContinuousConvMode":
+            self.config.peripherals["ADC"][adc_name]["ContinuousMode"] = (
+                    value == "ENABLE"
+            )
+        elif setting == "DMARegular":
+            self.config.peripherals["ADC"][adc_name]["DMA"] = value
+        elif setting == "DMAContinuousRequests":
+            self.config.peripherals["ADC"][adc_name]["DMA"] = value == "ENABLE"
+        elif setting == "EOCSelection":
+            self.config.peripherals["ADC"][adc_name]["EOCSelection"] = value
+
+    def _get_adc_instance_name(self) -> str:
+        adc_instances = self.config.peripherals.get("ADC", {})
+        return list(adc_instances.keys())[0] if adc_instances else "ADC"
+
+    def _parse_vp_adc_signal(self, key: str, value: str) -> None:
+        if not value.startswith("ADC"):
+            return
+
+        parts = value.split("_")
+        if parts[0].startswith("ADC") and parts[0][-1].isdigit():
+            adc_name = parts[0]  # e.g., ADC1
+        else:
+            adc_name = self._get_adc_instance_name()
+
+        self._ensure_adc_instance(adc_name)
+
+        mapped_channel = self._map_internal_channel(value)
+        if mapped_channel:
+            self._add_unique_entry(adc_name, "Channels", mapped_channel)
+            self._add_unique_entry(adc_name, "RegularConversions", mapped_channel)
 
     def _process_conversion_entry(self, adc_name: str, raw_value: str) -> None:
         """Extract and validate ADC channel entries."""
         # Split and process all comma-separated values
         for entry in raw_value.split(","):
             cleaned_entry = entry.strip()
+            mcu_family = (self.config.mcu_config.get("Family") or "").upper()
+            if not mcu_family.startswith(
+                    ("STM32G4", "STM32H7", "STM32H5", "STM32MP1")
+            ) and cleaned_entry.endswith(f"_{adc_name}"):
+                cleaned_entry = cleaned_entry.rsplit("_", 1)[0]
 
             # Validate entry format using regex
             if self._is_valid_channel(cleaned_entry):
                 self._add_unique_entry(adc_name, "Channels", cleaned_entry)
                 self._add_unique_entry(adc_name, "RegularConversions", cleaned_entry)
-            elif cleaned_entry:  # Log non-empty invalid entries
+            elif cleaned_entry:
                 logging.debug(f"Ignored invalid ADC entry: {cleaned_entry}")
 
     def _is_valid_channel(self, entry: str) -> bool:
         """Validate channel name format using regex pattern."""
         return bool(self._CHANNEL_PATTERN.match(entry))
 
+    def _ensure_adc_instance(self, adc_name: str) -> None:
+        if adc_name not in self.config.peripherals["ADC"]:
+            self.config.peripherals["ADC"][adc_name] = {
+                "ContinuousMode": False,
+                "RegularConversions": [],
+                "Channels": [],
+                "DMA": "DISABLE",
+            }
+
     def _add_unique_entry(self, adc_name: str, field: str, value: str) -> None:
         """Add value to list only if not already present."""
         target_list = self.config.peripherals["ADC"][adc_name][field]
         if value not in target_list:
             target_list.append(value)
+
+    def _deduplicate_channels(self) -> None:
+        for adc_cfg in self.config.peripherals["ADC"].values():
+            adc_cfg["Channels"] = list(dict.fromkeys(adc_cfg["Channels"]))
+            adc_cfg["RegularConversions"] = list(
+                dict.fromkeys(adc_cfg["RegularConversions"])
+            )
 
 
 # --------------------------
@@ -313,7 +397,9 @@ class SPIParser(PeripheralParser):
 
             prop = parts[1]
             if "BaudRate" in prop:
-                self.config.peripherals[p_type][spi_name]["BaudRate"] = sanitize_numeric(value)
+                self.config.peripherals[p_type][spi_name]["BaudRate"] = (
+                    sanitize_numeric(value)
+                )
             elif "Direction" in prop:
                 self.config.peripherals[p_type][spi_name]["Direction"] = value
             elif "CLKPolarity" in prop:
@@ -329,7 +415,7 @@ class SPIParser(PeripheralParser):
                 "Direction": None,
                 "CLKPolarity": None,
                 "CLKPhase": None,
-                "DMA": {}
+                "DMA": {},
             }
 
 
@@ -337,49 +423,70 @@ class SPIParser(PeripheralParser):
 # USART/UART Parser
 # --------------------------
 class USARTParser(PeripheralParser):
-    """Handle USART/UART peripheral configurations."""
+    """Parse USART, UART, and LPUART configurations, including signal-based instance inference."""
 
     def parse(self, p_type: str) -> None:
+        """
+        Parse all USART, UART, and LPUART configuration entries,
+        creating instances even if only pin signals are defined.
+        """
+        found_instances = set()
+
+        # First pass: normal parsing from ADC/UART/LPUART property keys
         for key, value in self.raw_map.items():
-            if not key.startswith(("USART", "UART", "LPUART")):
-                continue
+            if key.startswith(("USART", "UART", "LPUART")):
+                parts = key.split(".")
+                uart_name = parts[0]
+                found_instances.add(uart_name)
+                self._ensure_uart_instance(p_type, uart_name)
 
-            parts = key.split(".")
-            uart_name = parts[0]
-            self._ensure_uart_instance(p_type, uart_name)
+                prop = parts[1]
+                if "BaudRate" in prop:
+                    self.config.peripherals[p_type][uart_name]["BaudRate"] = (
+                        sanitize_numeric(value)
+                    )
+                elif "WordLength" in prop:
+                    self.config.peripherals[p_type][uart_name]["WordLength"] = value
+                elif "Parity" in prop:
+                    self.config.peripherals[p_type][uart_name]["Parity"] = value
+                elif "StopBits" in prop:
+                    self.config.peripherals[p_type][uart_name]["StopBits"] = value
+                elif "Mode" in prop:
+                    self._handle_operation_mode(p_type, uart_name, value)
 
-            prop = parts[1]
-            if "BaudRate" in prop:
-                self.config.peripherals[p_type][uart_name]["BaudRate"] = sanitize_numeric(value)
-            elif "WordLength" in prop:
-                self.config.peripherals[p_type][uart_name]["WordLength"] = value
-            elif "Parity" in prop:
-                self.config.peripherals[p_type][uart_name]["Parity"] = value
-            elif "StopBits" in prop:
-                self.config.peripherals[p_type][uart_name]["StopBits"] = value
-            elif "Mode" in prop:
-                self._handle_operation_mode(uart_name, value)
+        # Second pass: infer missing UART instances based on GPIO signals
+        for pin_name, gpio_cfg in self.config.gpio_pins.items():
+            signal = gpio_cfg.get("Signal", "")
+            if "_TX" in signal or "_RX" in signal:
+                uart_root = signal.split("_")[0]  # e.g., LPUART1
+                if (
+                        uart_root.startswith(("USART", "UART", "LPUART"))
+                        and uart_root not in found_instances
+                ):
+                    # Found a new UART based only on pin signals
+                    logging.debug(f"Inferred USART instance from pin: {uart_root}")
+                    self._ensure_uart_instance(p_type, uart_root)
 
     def _ensure_uart_instance(self, p_type: str, uart_name: str) -> None:
-        """Initialize UART instance if not exists."""
-        if not self.config.peripherals[p_type].get(uart_name):
+        """Ensure the UART/USART/LPUART instance exists in the peripherals configuration."""
+        if uart_name not in self.config.peripherals[p_type]:
             self.config.peripherals[p_type][uart_name] = {
                 "BaudRate": None,
                 "WordLength": None,
                 "Parity": None,
                 "StopBits": None,
                 "Mode": "Asynchronous",
-                "DMA": {}
+                "DMA": {},
             }
 
-    def _handle_operation_mode(self, uart_name: str, value: str) -> None:
-        """Decode complex mode configurations."""
+    def _handle_operation_mode(self, p_type: str, uart_name: str, value: str) -> None:
+        """Decode and set the USART operating mode."""
         if "IrDA" in value:
-            self.config.peripherals["USART"][uart_name]["Mode"] = "IrDA"
+            self.config.peripherals[p_type][uart_name]["Mode"] = "IrDA"
         elif "LIN" in value:
-            self.config.peripherals["USART"][uart_name]["Mode"] = "LIN"
+            self.config.peripherals[p_type][uart_name]["Mode"] = "LIN"
         elif "SmartCard" in value:
-            self.config.peripherals["USART"][uart_name]["Mode"] = "SmartCard"
+            self.config.peripherals[p_type][uart_name]["Mode"] = "SmartCard"
 
 
 # --------------------------
@@ -399,13 +506,17 @@ class I2CParser(PeripheralParser):
 
             prop = parts[1]
             if "ClockSpeed" in prop:
-                self.config.peripherals[p_type][i2c_name]["ClockSpeed"] = sanitize_numeric(value)
+                self.config.peripherals[p_type][i2c_name]["ClockSpeed"] = (
+                    sanitize_numeric(value)
+                )
             elif "DutyCycle" in prop:
                 self.config.peripherals[p_type][i2c_name]["DutyCycle"] = value
             elif "AddressingMode" in prop:
                 self.config.peripherals[p_type][i2c_name]["AddressingMode"] = value
             elif "DualAddressMode" in prop:
-                self.config.peripherals[p_type][i2c_name]["DualAddressMode"] = value == "ENABLE"
+                self.config.peripherals[p_type][i2c_name]["DualAddressMode"] = (
+                        value == "ENABLE"
+                )
 
     def _ensure_i2c_instance(self, p_type: str, i2c_name: str) -> None:
         """Initialize I2C instance if not exists."""
@@ -416,7 +527,7 @@ class I2CParser(PeripheralParser):
                 "AddressingMode": "7-bit",
                 "DualAddressMode": False,
                 "NoStretchMode": False,
-                "DMA": {}
+                "DMA": {},
             }
 
 
@@ -463,15 +574,15 @@ class CANParser(PeripheralParser):
                     "TimeSeg1": None,
                     "TimeSeg2": None,
                     "AutoRetransmission": False,
-                    "AutoWakeup": False
+                    "AutoWakeup": False,
                 },
                 "FDCAN": {
                     "NominalBaudRate": None,
                     "DataBaudRate": None,
                     "FrameFormat": None,
                     "StdFilters": 0,
-                    "ExtFilters": 0
-                }
+                    "ExtFilters": 0,
+                },
             }
             self.config.peripherals[p_type][can_name] = defaults[p_type].copy()
 
@@ -481,7 +592,7 @@ class CANParser(PeripheralParser):
             "BS1": "TimeSeg1",
             "BS2": "TimeSeg2",
             "ABOM": ("AutoRetransmission", lambda v: v == "ENABLE"),
-            "AWUM": ("AutoWakeup", lambda v: v == "ENABLE")
+            "AWUM": ("AutoWakeup", lambda v: v == "ENABLE"),
         }
 
         if mapping := param_map.get(prop):
@@ -498,7 +609,7 @@ class CANParser(PeripheralParser):
             "DataPrescaler": ("DataBaudRate", float),
             "FrameFormat": ("FrameFormat", str),
             "StdFiltersNbr": ("StdFilters", int),
-            "ExtFiltersNbr": ("ExtFilters", int)
+            "ExtFiltersNbr": ("ExtFilters", int),
         }
 
         if mapping := param_map.get(prop):
@@ -542,7 +653,7 @@ class USBParser(PeripheralParser):
                 "Mode": None,
                 "Speed": None,
                 "VBus": False,
-                "Endpoints": defaultdict(dict)
+                "Endpoints": defaultdict(dict),
             }
 
     def _process_global_property(self, usb_name: str, prop: str, value: str) -> None:
@@ -550,7 +661,7 @@ class USBParser(PeripheralParser):
         prop_map = {
             "Mode": ("Mode", str),
             "Speed": ("Speed", str),
-            "VbusMonitoring": ("VBus", lambda v: v == "ENABLE")
+            "VbusMonitoring": ("VBus", lambda v: v == "ENABLE"),
         }
 
         if mapping := prop_map.get(prop):
@@ -569,7 +680,9 @@ class USBParser(PeripheralParser):
 
             # Validate endpoint number (0-15 for USB FS)
             if 0 <= int(ep_num) <= 15:
-                endpoint = self.config.peripherals["USB"][usb_name]["Endpoints"][endpoint_id]
+                endpoint = self.config.peripherals["USB"][usb_name]["Endpoints"][
+                    endpoint_id
+                ]
 
                 # Special handling for endpoint type
                 if ep_prop == "Type":
@@ -583,7 +696,7 @@ class USBParser(PeripheralParser):
             "BULK": "Bulk",
             "INTERRUPT": "Interrupt",
             "ISOCHRONOUS": "Isochronous",
-            "CONTROL": "Control"
+            "CONTROL": "Control",
         }
         return type_map.get(raw_type.split("_")[-1], "Unknown")
 
@@ -603,8 +716,11 @@ class DMAParser(PeripheralParser):
         "PeriphDataAlignment": ("periph_align", lambda v: v.split("_")[-1].lower()),
         "MemDataAlignment": ("mem_align", lambda v: v.split("_")[-1].lower()),
         "Mode": ("mode", lambda v: v.split("_")[-1].capitalize()),
-        "Priority": ("priority", lambda v: v.split("_")[-1].replace("VERY", "").strip().capitalize()),
-        "FIFOMode": ("fifo", lambda v: "Enabled" if "ENABLE" in v else "Disabled")
+        "Priority": (
+            "priority",
+            lambda v: v.split("_")[-1].replace("VERY", "").strip().capitalize(),
+        ),
+        "FIFOMode": ("fifo", lambda v: "Enabled" if "ENABLE" in v else "Disabled"),
     }
 
     def parse(self, p_type: str) -> None:
@@ -644,8 +760,10 @@ class DMAParser(PeripheralParser):
         for config_key, props in config_map.items():
             structured = {
                 "request_id": props.get("_request_id", ""),
-                "peripheral": self.config.dma_requests.get(props.get("_request_id", ""), "Unknown"),
-                "stream": props.get("Instance", "")
+                "peripheral": self.config.dma_requests.get(
+                    props.get("_request_id", ""), "Unknown"
+                ),
+                "stream": props.get("Instance", ""),
             }
 
             # Property conversion
@@ -654,7 +772,9 @@ class DMAParser(PeripheralParser):
                     try:
                         structured[field] = converter(props[cube_prop])
                     except Exception as e:
-                        logging.warning(f"DMA property conversion failed for {config_key}.{cube_prop}: {str(e)}")
+                        logging.warning(
+                            f"DMA property conversion failed for {config_key}.{cube_prop}: {str(e)}"
+                        )
 
             self.config.dma_configs[config_key] = structured
 
@@ -712,7 +832,7 @@ class FreeRTOSParser(PeripheralParser):
                 "Priority": elements[1],
                 "StackSize": f"{elements[2]}B",
                 "EntryFunction": elements[3],
-                "Type": elements[4]
+                "Type": elements[4],
             }
 
     def _process_feature_flag(self, feature: str, state: str) -> None:
@@ -821,7 +941,7 @@ def save_to_yaml(data: Dict[str, Any], output_path: str = "parsed_ioc.yaml") -> 
                 allow_unicode=True,
                 sort_keys=False,
                 default_flow_style=False,
-                indent=2
+                indent=2,
             )
         logging.info(f"Configuration exported to: {output_path}")
         return True
@@ -841,8 +961,12 @@ def print_summary(data: Dict[str, Any]) -> None:
     # GPIO Summary
     gpio = data.get("GPIO", {})
     print(f"\nGPIO ({len(gpio)} pins):")
-    print(f"  Outputs: {sum(1 for c in gpio.values() if c.get('Signal') == 'GPIO_Output')}")
-    print(f"  Inputs: {sum(1 for c in gpio.values() if c.get('Signal') == 'GPIO_Input')}")
+    print(
+        f"  Outputs: {sum(1 for c in gpio.values() if c.get('Signal') == 'GPIO_Output')}"
+    )
+    print(
+        f"  Inputs: {sum(1 for c in gpio.values() if c.get('Signal') == 'GPIO_Input')}"
+    )
     print(f"  External Interrupts: {sum(1 for c in gpio.values() if c.get('GPXTI'))}")
 
     # Peripheral Summary
@@ -871,22 +995,17 @@ def main() -> None:
     """Command line interface handler."""
     parser = argparse.ArgumentParser(
         description="STM32CubeMX IOC Configuration Parser v2.0",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "-d", "--directory",
-        required=True,
-        help="Input directory containing .ioc files"
+        "-d", "--directory", required=True, help="Input directory containing .ioc files"
     )
     parser.add_argument(
-        "-o", "--output",
-        help="Custom output YAML file path (default: <input_file>.yaml)"
+        "-o",
+        "--output",
+        help="Custom output YAML file path (default: <input_file>.yaml)",
     )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable debug logging"
-    )
+    parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
 
     args = parser.parse_args()
 
