@@ -278,8 +278,8 @@ sectors:
 
 ### `xr_stm32_it`
 
-批量修改 STM32 中断处理文件，插入 UART IDLE 回调支持。  
-Modifies STM32 interrupt handlers to add UART IDLE callback support for LibXR.
+批量修改 STM32 中断处理文件，插入 UART IDLE 回调和 USB F1 回调支持。
+Modifies STM32 interrupt handlers to add UART IDLE callback and USB F1 callback support for LibXR.
 
 ```bash
 usage: xr_stm32_it [-h] input_dir
@@ -297,18 +297,34 @@ usage: xr_stm32_it [-h] input_dir
 - 查找每个 `*_it.c` 文件中的 `HAL_UART_IRQHandler(&huartX)` 调用  
   Find `HAL_UART_IRQHandler(&huartX)` calls in each `*_it.c` file
 
+- 查找 `USB_HP_CAN1_TX_IRQHandler` 和 `USB_LP_CAN1_RX0_IRQHandler` 中断函数  
+  Find `USB_HP_CAN1_TX_IRQHandler` and `USB_LP_CAN1_RX0_IRQHandler` handlers
+
 - 向对应中断函数的 `/* USER CODE BEGIN XXX_IRQn 1 */` 区域插入：  
   Add to the `/* USER CODE BEGIN XXX_IRQn 1 */` section of the corresponding interrupt function
   
-  ```c
+```c
+  /* LibXR UART IDLE callback (Auto-generated) */
+#ifdef HAL_UART_MODULE_ENABLED
   STM32_UART_ISR_Handler_IDLE(&huartX);
-  ```
+#endif
+```
 
-- 若未定义 `STM32_UART_ISR_Handler_IDLE` 的 `extern` 声明，将插入至 `/* USER CODE BEGIN 0 */` 区域下  
-  Insert at `/* USER CODE BEGIN 0 */` if `STM32_UART_ISR_Handler_IDLE` is not defined
+- 对于 USB 中断（仅 STM32F1，且启用 HAL_PCD_MODULE），插入：  
+  For USB interrupts (STM32F1 only, with HAL_PCD_MODULE enabled)
 
-- 支持多个 UART 接口  
-  Support for multiple UART interfaces
+```c
+/* LibXR USB Tx Cplt callback (Auto-generated, For STM32F1) */
+#if defined(STM32F1) && defined(HAL_PCD_MODULE_ENABLED)
+  STM32_USB_ISR_Handler_F1();
+#endif
+```
+
+- 若未定义 `STM32_UART_ISR_Handler_IDLE`和 `STM32_USB_ISR_Handler_F1`的 `extern` 声明，将插入至 `/* USER CODE BEGIN 0 */` 区域下  
+  Insert at `/* USER CODE BEGIN 0 */` if `STM32_UART_ISR_Handler_IDLE` and `STM32_USB_ISR_Handler_F1` is not defined
+
+- 支持多个 UART 和 USB 接口  
+  Support for multiple UART and USB interfaces
 
 #### 📦 输出内容 (Outputs)
 
