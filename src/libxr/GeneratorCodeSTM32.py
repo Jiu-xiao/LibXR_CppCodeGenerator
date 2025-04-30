@@ -440,7 +440,9 @@ class PeripheralFactory:
     @staticmethod
     def _generate_canfd(instance: str, config: dict) -> tuple:
         """Generate CAN FD initialization with configurable queue size."""
-        queue_size = libxr_settings['FDCAN'].get(instance, {}).get('queue_size', 5)
+        instance_cfg = libxr_settings['FDCAN'].setdefault(instance, {})
+        queue_size = instance_cfg.setdefault('queue_size', 5)
+
         _register_device(f"{instance.lower()}", "FDCAN")
         return ("main",
                 f'  STM32CANFD {instance.lower()}(&h{instance.lower()}, "{instance.lower()}", {queue_size});\n')
@@ -448,7 +450,9 @@ class PeripheralFactory:
     @staticmethod
     def _generate_can(instance: str, config: dict) -> tuple:
         """Generate classic CAN initialization with queue configuration."""
-        queue_size = libxr_settings['CAN'].get(instance, {}).get('queue_size', 5)
+        instance_cfg = libxr_settings['CAN'].setdefault(instance, {})
+        queue_size = instance_cfg.setdefault('queue_size', 5)
+
         _register_device(f"{instance.lower()}", "CAN")
         return ("main",
                 f'  STM32CAN {instance.lower()}(&h{instance.lower()}, "{instance.lower()}", {queue_size});\n')
@@ -646,11 +650,16 @@ def _setup_usb_terminal(usb_info: dict) -> str:
 
 def _setup_usb(usb_info: dict) -> str:
     _register_device('uart_cdc', "UART")
+
+    usb_config = libxr_settings.setdefault("USB", {})
+    tx_queue = usb_config.setdefault("tx_queue_size", 5)
+    rx_queue = usb_config.setdefault("rx_queue_size", 5)
+
     return (
         f"  STM32VirtualUART uart_cdc({usb_info['handler']}, "
-        f"UserTxBuffer{usb_info['speed']}, UserRxBuffer{usb_info['speed']}, 5, 5);\n"
+        f"UserTxBuffer{usb_info['speed']}, UserRxBuffer{usb_info['speed']}, "
+        f"{tx_queue}, {rx_queue});\n"
     )
-
 
 def _detect_usb_device(project_data: dict) -> dict:
     usb_config = project_data.get("Peripherals", {}).get("USB", {})
