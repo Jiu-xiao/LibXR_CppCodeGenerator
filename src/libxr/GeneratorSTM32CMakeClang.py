@@ -1,9 +1,10 @@
 import argparse
+import logging
 import os
 import sys
-import logging
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+
 
 def find_toolchain_file(directory):
     """
@@ -23,6 +24,7 @@ def find_toolchain_file(directory):
 
     return cmake_path if os.path.exists(cmake_path) else None
 
+
 def parse_cmake_file(file_path):
     """
     Parses the CMake configuration file and extracts necessary data.
@@ -40,7 +42,8 @@ def parse_cmake_file(file_path):
         with open(file_path, "r", encoding="utf-8") as file:
             for line in file:
                 line = line.strip()
-                if "flash.ld" in line and data["linker_script"] is None:
+                if ("flash.ld" in line or "FLASH.ld" in line or "flash.LD" in line or "FLASH.LD" in line) and data[
+                    "linker_script"] is None:
                     data["raw_linker_script_line"] = line.replace("# ", "")
                     data["linker_script"] = line.split("/")[-1].strip(' \\")')
                 elif "-mcpu=" in line and data["target_flags"] is None:
@@ -60,6 +63,7 @@ def parse_cmake_file(file_path):
         sys.exit(1)
 
     return data
+
 
 def gen_toolchain_cmake(data):
     """
@@ -192,6 +196,7 @@ if(NOT TARGET copy_compile_commands_to_build)
 endif()
 """
     return cmake_file_content
+
 
 def main():
     parser = argparse.ArgumentParser(
