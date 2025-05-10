@@ -704,25 +704,19 @@ def generate_xrobot_hardware_container() -> str:
     }
 
     # Collect types (Entry<T>) and entries (device with aliases)
-    type_list = []
     entry_list = []
 
     for dev, meta in device_aliases.items():
         dev_type = meta["type"]
         aliases = meta["aliases"]
 
-        type_list.append(f"    LibXR::Entry<LibXR::{dev_type}>")
-
         if not aliases:
-            entry_list.append(f"  {{{dev}, {{}}}}")  # No aliases
+            entry_list.append(f"  LibXR::Entry<LibXR::{dev_type}>({{{dev}, {{}}}})")  # No aliases
         else:
             alias_str = ", ".join(f'"{alias}"' for alias in aliases)
-            entry_list.append(f"  {{{dev}, {{{alias_str}}}}}")  # With aliases
+            entry_list.append(f"  LibXR::Entry<LibXR::{dev_type}>({{{dev}, {{{alias_str}}}}})")  # With aliases
 
-    if not type_list:
-        return "// No devices to generate HardwareContainer.\n"
-
-    return f"""\n  LibXR::HardwareContainer<\n{',\n'.join(type_list)}\n  > peripherals{{\n  {",\n  ".join(entry_list)}\n  }};\n"""
+    return f"""\n  LibXR::HardwareContainer peripherals{{\n  {",\n  ".join(entry_list)}\n  }};\n"""
 
 # --------------------------
 # Main Generator
