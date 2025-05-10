@@ -607,8 +607,8 @@ def configure_terminal(project_data: dict) -> str:
     uart_devices = list(project_data.get("Peripherals", {}).get("USART", {}).keys())
     # User-specified terminal source
     if terminal_source != "":
+        code += _setup_usb(usb_info)
         if terminal_source == "usb" and usb_info:
-            code += _setup_usb(usb_info)
             code += _setup_usb_terminal(usb_info)
         elif terminal_source in [d.lower() for d in uart_devices]:
             dev = terminal_source.upper()
