@@ -75,9 +75,12 @@ def main():
         os.remove(file_path)
 
     freertos_enable = os.path.exists(os.path.join(input_directory, "Core", "Inc", "FreeRTOSConfig.h"))
+    threadx_enable = os.path.exists(os.path.join(input_directory, "Core", "Inc", "app_threadx.h"))
 
     if freertos_enable:
         system = "FreeRTOS"
+    elif threadx_enable:
+        system = "ThreadX"
     else:
         system = "None"
 

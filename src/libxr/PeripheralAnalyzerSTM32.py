@@ -51,6 +51,12 @@ class ConfigurationManager:
             "Heap": None,
             "Features": {},
         }
+        self.threadx_config: Dict[str, Any] = {
+            "AllocationMethod": None,
+            "MemPoolSize": None,
+            "CorePresent": None,
+            "Tasks": {},
+        }
         self.timebase: Dict[str, Optional[str]] = {"Source": "SysTick", "IRQ": None}
         self.mcu_config: Dict[str, Optional[str]] = {"Family": None, "Type": None}
 
@@ -68,14 +74,13 @@ class ConfigurationManager:
         }
 
         # Conditionally add FreeRTOS section
+        cleaned_data_threadx = self._clean_threadx()
+        if cleaned_data_threadx["AllocationMethod"]:
+            cleaned_data["ThreadX"] = cleaned_data_threadx
+
+        # Add FreeRTOS only if any fields exist
         cleaned_freertos = self._clean_freertos()
-        if any(
-                [
-                    cleaned_freertos["Tasks"],
-                    cleaned_freertos["Heap"] is not None,
-                    cleaned_freertos["Features"],
-                ]
-        ):
+        if any([cleaned_freertos["Tasks"], cleaned_freertos["Heap"], cleaned_freertos["Features"]]):
             cleaned_data["FreeRTOS"] = cleaned_freertos
 
         return cleaned_data
@@ -108,6 +113,11 @@ class ConfigurationManager:
 
     def _clean_freertos(self) -> Dict:
         return {
+            "RTOS": self.freertos_config.get("RTOS", "FreeRTOS"),
+            "Enabled": self.freertos_config.get("Enabled", False),
+            "AllocationMethod": self.freertos_config.get("AllocationMethod"),
+            "MemPoolSize": self.freertos_config.get("MemPoolSize"),
+            "CorePresent": self.freertos_config.get("CorePresent"),
             "Tasks": self.freertos_config["Tasks"],
             "Heap": self.freertos_config["Heap"],
             "Features": [
@@ -115,6 +125,14 @@ class ConfigurationManager:
                 for feat, enabled in self.freertos_config["Features"].items()
                 if enabled
             ],
+        }
+
+    def _clean_threadx(self) -> Dict:
+        return {
+            "AllocationMethod": self.threadx_config.get("AllocationMethod"),
+            "MemPoolSize": self.threadx_config.get("MemPoolSize"),
+            "CorePresent": self.threadx_config.get("CorePresent"),
+            "Tasks": self.threadx_config["Tasks"],
         }
 
 
@@ -804,6 +822,32 @@ class DMAParser(PeripheralParser):
                     break
 
 
+class ThreadXParser(PeripheralParser):
+    """Handle ThreadX and Azure RTOS-related configurations from .ioc."""
+
+    def parse(self, p_type: str) -> None:
+        for key, value in self.raw_map.items():
+            if key.endswith("TX_APP_MEM_POOL_SIZE"):
+                self.config.threadx_config["MemPoolSize"] = f"{sanitize_numeric(value)}B"
+
+            elif key.endswith("AZRTOS_APP_MEM_ALLOCATION_METHOD"):
+                method_map = {
+                    "1": "Static",
+                    "0": "Dynamic",
+                }
+                self.config.threadx_config["AllocationMethod"] = method_map.get(value, value)
+
+            elif "ThreadXCcRTOSJjThreadXJjCore" in key:
+                self.config.threadx_config["CorePresent"] = value.lower() == "true"
+
+            elif key.startswith("AZRTOS.ThreadX.") and key.endswith(".StackSize"):
+                parts = key.split(".")
+                if len(parts) == 3:
+                    task = parts[1]
+                    self.config.threadx_config["Tasks"][task] = {
+                        "StackSize": f"{sanitize_numeric(value)}B"
+                    }
+
 # --------------------------
 # FreeRTOS Parser
 # --------------------------
@@ -863,6 +907,7 @@ def parse_ioc_file(ioc_path: str) -> Optional[Dict[str, Any]]:
 
     # Instantiate all parsers
     parsers = [
+        ThreadXParser(config, raw_map),
         FreeRTOSParser(config, raw_map),
         McuParser(config, raw_map),
         TIMParser(config, raw_map),
