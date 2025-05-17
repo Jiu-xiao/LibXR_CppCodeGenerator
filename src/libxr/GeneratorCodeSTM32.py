@@ -445,7 +445,7 @@ class PeripheralFactory:
 
         _register_device(f"{instance.lower()}", "FDCAN")
         return ("main",
-                f'  STM32CANFD {instance.lower()}(&h{instance.lower()}, "{instance.lower()}", {queue_size});\n')
+                f'  STM32CANFD {instance.lower()}(&h{instance.lower()}, {queue_size});\n')
 
     @staticmethod
     def _generate_can(instance: str, config: dict) -> tuple:
@@ -455,7 +455,7 @@ class PeripheralFactory:
 
         _register_device(f"{instance.lower()}", "CAN")
         return ("main",
-                f'  STM32CAN {instance.lower()}(&h{instance.lower()}, "{instance.lower()}", {queue_size});\n')
+                f'  STM32CAN {instance.lower()}(&h{instance.lower()}, {queue_size});\n')
 
     @staticmethod
     def _generate_spi(instance: str, config: dict) -> tuple:
@@ -525,7 +525,7 @@ def _generate_extern_declarations(project_data: dict) -> str:
         for instance in instances:
             if p_type == 'USB':
                 usb_info = _detect_usb_device(project_data)
-                if usb_info is not None:
+                if usb_info is not None and libxr_settings.get("SYSTEM", "None") != 'ThreadX':
                     externs.add(f'extern USBD_HandleTypeDef {usb_info['handler']};')
                     externs.add(f'extern uint8_t UserTxBuffer{usb_info['speed']}[APP_TX_DATA_SIZE];')
                     externs.add(f'extern uint8_t UserRxBuffer{usb_info['speed']}[APP_RX_DATA_SIZE];')
@@ -607,9 +607,9 @@ def configure_terminal(project_data: dict) -> str:
     uart_devices = list(project_data.get("Peripherals", {}).get("USART", {}).keys())
     # User-specified terminal source
     if terminal_source != "":
-        code += _setup_usb(usb_info)
+        code += _setup_usb(usb_info, libxr_settings.get("SYSTEM", "None"))
         if terminal_source == "usb" and usb_info:
-            code += _setup_usb_terminal(usb_info)
+            code += _setup_usb_terminal(usb_info, libxr_settings.get("SYSTEM", "None"))
         elif terminal_source in [d.lower() for d in uart_devices]:
             dev = terminal_source.upper()
             code += f"""  STDIO::read_ = &{dev.lower()}.read_port_;
@@ -619,7 +619,7 @@ def configure_terminal(project_data: dict) -> str:
             logging.warning(f"Invalid terminal_source: {terminal_source}")
     else:
         if usb_info:
-            code += _setup_usb(usb_info)
+            code += _setup_usb(usb_info, libxr_settings.get("SYSTEM", "None"))
             _register_device(f"{uart_devices[0].lower()}", "UART")
 
     if terminal_source != "":
@@ -630,9 +630,25 @@ def configure_terminal(project_data: dict) -> str:
             term_config.setdefault("MAX_ARG_NUMBER", 5),
             term_config.setdefault("MAX_HISTORY_NUMBER", 5)
         ]
+
+        run_as_thread = term_config.setdefault("RunAsThread", False)
+
+        if run_as_thread:
+            thread_stack_depth = term_config.setdefault("ThreadStackDepth", 512)
+            thread_priority = term_config.setdefault("ThreadPriority", 3)
+
         code += f"""\
   RamFS ramfs("XRobot");
   Terminal<{', '.join(map(str, params))}> terminal(ramfs);
+"""
+        if run_as_thread:
+            code += f"""\
+  LibXR::Thread term_thread;
+  term_thread.Create(&terminal, terminal.ThreadFun, "terminal", {thread_stack_depth},
+                     static_cast<LibXR::Thread::Priority>({thread_priority}));
+"""
+        else:
+            code += f"""\
   auto terminal_task = Timer::CreateTask(terminal.TaskFun, &terminal, 10);
   Timer::Add(terminal_task);
   Timer::Start(terminal_task);
@@ -642,23 +658,34 @@ def configure_terminal(project_data: dict) -> str:
     return code
 
 
-def _setup_usb_terminal(usb_info: dict) -> str:
+def _setup_usb_terminal(usb_info: dict, system: str) -> str:
+    if system == 'ThreadX':
+        return (
+        "  // STDIO::read_ = &uart_cdc.read_port_;\n"
+        "  // STDIO::write_ = &uart_cdc.write_port_;\n"
+        )
     return (
         "  STDIO::read_ = &uart_cdc.read_port_;\n"
         "  STDIO::write_ = &uart_cdc.write_port_;\n"
     )
 
-def _setup_usb(usb_info: dict) -> str:
+def _setup_usb(usb_info: dict, system: str) -> str:
     _register_device('uart_cdc', "UART")
 
     usb_config = libxr_settings.setdefault("USB", {})
     tx_queue = usb_config.setdefault("tx_queue_size", 5)
     rx_queue = usb_config.setdefault("rx_queue_size", 5)
 
+    if system == 'ThreadX':
+        return (
+            f"  // HAL_PCDEx_SetRxFiFo/HAL_PCDEx_SetTxFiFo\n"
+            f"  // STM32VirtualUART uart_cdc(&hpcd_xxx_FS, 2048, 2, 2048, 2, 5, 15, 256);\n"
+        )
+
     return (
         f"  STM32VirtualUART uart_cdc({usb_info['handler']}, "
         f"UserTxBuffer{usb_info['speed']}, UserRxBuffer{usb_info['speed']}, "
-        f"{tx_queue}, {rx_queue});\n"
+        f"{rx_queue}, {tx_queue});\n"
     )
 
 def _detect_usb_device(project_data: dict) -> dict:
