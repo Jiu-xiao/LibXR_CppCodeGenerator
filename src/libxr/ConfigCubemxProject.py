@@ -5,6 +5,7 @@ import os
 import subprocess
 import logging
 import sys
+from importlib.metadata import version, PackageNotFoundError
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
@@ -19,6 +20,24 @@ def is_git_repo(path):
         return result.stdout.strip() == "true"
     except subprocess.CalledProcessError:
         return False
+
+def is_git_clean(path):
+    """Check if the Git repo at `path` has no uncommitted changes."""
+    result = subprocess.run(
+        ["git", "-C", path, "status", "--porcelain"],
+        capture_output=True,
+        text=True
+    )
+    return result.returncode == 0 and result.stdout.strip() == ""
+
+def get_current_branch(path):
+    """Get the current branch name of a Git repo at `path`."""
+    result = subprocess.run(
+        ["git", "-C", path, "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True
+    )
+    return result.stdout.strip()
 
 def run_command(command):
     result = subprocess.run(command, shell=True, capture_output=True, text=True)
@@ -71,9 +90,17 @@ def add_libxr(project_dir):
         run_command(f"cd {project_dir} && git submodule update --init --recursive")
         logging.info("LibXR submodule added and initialized.")
     else:
-        logging.info("LibXR submodule already exists. Checking for updates...")
-        run_command(f"cd {project_dir} && git submodule update --init --recursive")
-        logging.info("LibXR submodule updated.")
+        logging.info("LibXR submodule already exists.")
+        if is_git_clean(libxr_path):
+            logging.info("LibXR submodule is clean. Fetching latest changes...")
+            branch = get_current_branch(libxr_path)
+            run_command(f"cd {libxr_path} && git fetch origin")
+            run_command(f"cd {libxr_path} && git checkout {branch}")
+            run_command(f"cd {libxr_path} && git pull origin {branch}")
+            run_command(f"cd {project_dir} && git submodule update --init --recursive")
+            logging.info("LibXR submodule updated to latest remote version.")
+        else:
+            logging.warning("LibXR submodule has local changes. Skipping update.")
 
 def create_user_directory(project_dir):
     """Ensure the User directory exists."""
@@ -107,6 +134,12 @@ def generate_cmake_file(project_dir, clang_enable):
         run_command(f"xr_stm32_clang {project_dir}")
 
 def main():
+    try:
+        pkg_version = version("libxr")
+        print(f"libxr {pkg_version}")
+    except PackageNotFoundError:
+        print("libxr (version unknown)")
+
     parser = argparse.ArgumentParser(description="Automate STM32CubeMX project setup")
     parser.add_argument("-d", "--directory", required=True, help="STM32CubeMX project directory")
     parser.add_argument("-t", "--terminal", default="", help="Optional terminal device source")
