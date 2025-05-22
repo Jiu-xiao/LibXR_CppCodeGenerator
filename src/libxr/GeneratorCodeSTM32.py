@@ -408,7 +408,7 @@ class PeripheralFactory:
         uart_config = libxr_settings['USART'].setdefault(instance.lower(), {})
         tx_queue = uart_config.setdefault("tx_queue_size", 5)
 
-        code = f"  STM32UART {instance.lower()}(&h{instance.lower().replace("usart", "uart")},\n" \
+        code = f"  STM32UART {instance.lower()}(&h{instance.lower().replace('usart', 'uart')},\n" \
                f"              {rx_buf}, {tx_buf}, {tx_queue});\n"
         _register_device(f"{instance.lower()}", "UART")
         return ("main", code)
