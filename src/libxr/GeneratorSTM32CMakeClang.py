@@ -80,6 +80,8 @@ def gen_toolchain_cmake(data):
 # Target definition
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_PROCESSOR ARM)
+set(CMAKE_C_COMPILER_TARGET arm-none-eabi)
+set(CMAKE_CXX_COMPILER_TARGET arm-none-eabi)
 
 # Toolchain settings
 set(CMAKE_LINKER arm-none-eabi-ld)
