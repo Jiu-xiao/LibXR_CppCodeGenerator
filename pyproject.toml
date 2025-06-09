@@ -29,7 +29,6 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-gui = ["PyQt5"]
 cli = ["rich", "click"]
 
 [project.urls]
