@@ -615,6 +615,34 @@ def generate_gpio_config(project_data: dict) -> str:
         code += f'  STM32GPIO {alias};\n'
     return code
 
+# Watchdog
+def configure_watchdog(project_data: dict) -> str:
+    code = ""
+    wdg_config = libxr_settings.setdefault("Watchdog", {})
+    run_as_thread = wdg_config.setdefault("RunAsThread", False)
+    feed_interval = wdg_config.setdefault("FeedInterval", 250)
+
+    watchdog_instances = []
+    for name, cfg in project_data.get("Peripherals", {}).get("IWDG", {}).items():
+        if cfg.get("Enabled"):
+            watchdog_instances.append(name.lower())
+    if not watchdog_instances:
+        return code
+
+    for name in watchdog_instances:
+        if run_as_thread:
+            thread_stack = wdg_config.setdefault("ThreadStackDepth", 1024)
+            thread_priority = wdg_config.setdefault("ThreadPriority", 3)
+            code += f"""  LibXR::Thread {name}_thread;
+  {name}_thread.Create(reinterpret_cast<LibXR::Watchdog *>(&{name}), {name}.ThreadFun, "{name}_wdg", {thread_stack},
+                      static_cast<LibXR::Thread::Priority>({thread_priority}));
+"""
+        else:
+            code += f"""  auto {name}_task = Timer::CreateTask({name}.TaskFun, reinterpret_cast<LibXR::Watchdog *>(&{name}), {feed_interval});
+  Timer::Add({name}_task);
+  Timer::Start({name}_task);
+"""
+    return code
 
 # --------------------------
 # Terminal Configuration
@@ -786,6 +814,7 @@ def generate_full_code(project_data: dict, use_xrobot: bool, existing_code: str)
         generate_gpio_config(project_data),
         generate_peripheral_instances(project_data),
         configure_terminal(project_data),
+        configure_watchdog(project_data),
         generate_xrobot_hardware_container() if use_xrobot else '',
         '  /* User Code Begin 3 */',
         user_code_def_3 if preserve_user_blocks(existing_code, 3) == '' else '',
