@@ -849,6 +849,57 @@ class ThreadXParser(PeripheralParser):
                     }
 
 # --------------------------
+# Watchdog Parser
+# --------------------------
+class WatchdogParser(PeripheralParser):
+    """Parse IWDG and WWDG configurations."""
+
+    def parse(self, p_type: str) -> None:
+        for key, value in self.raw_map.items():
+            # IWDG
+            if key.startswith("VP_IWDG") and ".Mode" in key and value == "IWDG_Activate":
+                # 这里的名字通常为 VP_IWDG_VS_IWDG，也可只按 IWDG 归档
+                match = re.match(r"VP_(IWDG\d*)_VS_IWDG\.Mode", key)
+                if match:
+                    wdg_name = match.group(1) or "IWDG"  # "IWDG1" 或 "IWDG2" 或 ""
+                    if not wdg_name:
+                        wdg_name = "IWDG"
+                    self._ensure_wdg_instance("IWDG", wdg_name)
+                    self.config.peripherals["IWDG"][wdg_name]["Enabled"] = True
+            elif key.startswith("IWDG"):
+                iwdg_name = key.split(".")[0]  # IWDG or IWDG1
+                self._ensure_wdg_instance("IWDG", iwdg_name)
+                prop = key.split(".", 1)[1] if "." in key else None
+
+                if prop == "Prescaler":
+                    self.config.peripherals["IWDG"][iwdg_name]["Prescaler"] = sanitize_numeric(value)
+                elif prop == "Reload":
+                    self.config.peripherals["IWDG"][iwdg_name]["Reload"] = sanitize_numeric(value)
+                elif prop == "Window":
+                    self.config.peripherals["IWDG"][iwdg_name]["Window"] = sanitize_numeric(value)
+                elif prop == "Enable":
+                    self.config.peripherals["IWDG"][iwdg_name]["Enabled"] = (value == "ENABLE")
+
+            # WWDG
+            elif key.startswith("WWDG"):
+                wwdg_name = key.split(".")[0]
+                self._ensure_wdg_instance("WWDG", wwdg_name)
+                prop = key.split(".")[1] if "." in key else None
+
+                if prop == "Prescaler":
+                    self.config.peripherals["WWDG"][wwdg_name]["Prescaler"] = sanitize_numeric(value)
+                elif prop == "Window":
+                    self.config.peripherals["WWDG"][wwdg_name]["Window"] = sanitize_numeric(value)
+                elif prop == "Counter":
+                    self.config.peripherals["WWDG"][wwdg_name]["Counter"] = sanitize_numeric(value)
+                elif prop == "Enable":
+                    self.config.peripherals["WWDG"][wwdg_name]["Enabled"] = (value == "ENABLE")
+
+    def _ensure_wdg_instance(self, wdg_type: str, wdg_name: str) -> None:
+        if wdg_name not in self.config.peripherals[wdg_type]:
+            self.config.peripherals[wdg_type][wdg_name] = {}
+
+# --------------------------
 # FreeRTOS Parser
 # --------------------------
 class FreeRTOSParser(PeripheralParser):
@@ -917,6 +968,7 @@ def parse_ioc_file(ioc_path: str) -> Optional[Dict[str, Any]]:
         I2CParser(config, raw_map),
         CANParser(config, raw_map),
         USBParser(config, raw_map),
+        WatchdogParser(config, raw_map),
         DMAParser(config, raw_map),
     ]
 
@@ -1021,6 +1073,15 @@ def print_summary(data: Dict[str, Any]) -> None:
         for name, cfg in group.items():
             print(f"    {name}: {_format_peripheral_config(p_type, cfg)}")
 
+    iwdgs = data.get("Peripherals", {}).get("IWDG", {})
+    wwdgs = data.get("Peripherals", {}).get("WWDG", {})
+    if iwdgs or wwdgs:
+        print("\nWatchdogs:")
+        for k, v in iwdgs.items():
+            print(f"  {k}: Enabled={v.get('Enabled', False)}, Prescaler={v.get('Prescaler')}, Reload={v.get('Reload')}")
+        for k, v in wwdgs.items():
+            print(
+                f"  {k}: Enabled={v.get('Enabled', False)}, Prescaler={v.get('Prescaler')}, Window={v.get('Window')}, Counter={v.get('Counter')}")
 
 def _format_peripheral_config(p_type: str, config: Dict) -> str:
     """Generate single-line peripheral configuration summary."""

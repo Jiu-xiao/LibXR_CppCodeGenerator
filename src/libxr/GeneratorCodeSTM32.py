@@ -371,7 +371,8 @@ class PeripheralFactory:
             "USART": PeripheralFactory._generate_uart,
             "UART": PeripheralFactory._generate_uart,
             "LPUART": PeripheralFactory._generate_uart,
-            "I2C": PeripheralFactory._generate_i2c
+            "I2C": PeripheralFactory._generate_i2c,
+            "IWDG": PeripheralFactory._generate_iwdg,
         }
         generator = handler_map.get(p_type.upper())
         return generator(instance, config) if generator else ("", "")
@@ -473,6 +474,24 @@ class PeripheralFactory:
         return ("main",
                 f'  STM32SPI {instance.lower()}(&h{instance.lower()}, {rx_buf}, {tx_buf}, {dma_min_size});\n')
 
+    @staticmethod
+    def _generate_iwdg(instance: str, config: dict) -> tuple:
+        IWDG_DEFAULT_CONFIG = {
+            "timeout_ms": 1000,
+            "feed_ms": 250
+        }
+        if not config.get("Enabled"):
+            return ("", "")
+            # 1. 统一到 libxr_settings
+        iwdg_config = libxr_settings['IWDG'].setdefault(instance.lower(), {})
+        timeout_ms = iwdg_config.setdefault("timeout_ms", config.get("Configuration", {}).get("timeout_ms", 1000))
+        feed_ms = iwdg_config.setdefault("feed_ms", config.get("Configuration", {}).get("feed_ms", 250))
+        code = (
+            f"  STM32Watchdog {instance.lower()}(&h{instance.lower()}, "
+            f"{timeout_ms}, {feed_ms});\n"
+        )
+        _register_device(instance.lower(), "Watchdog")
+        return ("main", code)
 
 def _generate_header_includes(use_xrobot: bool = False) -> str:
     """Generate essential header inclusions with optional XRobot components."""
@@ -491,6 +510,7 @@ def _generate_header_includes(use_xrobot: bool = False) -> str:
         '#include "stm32_timebase.hpp"',
         '#include "stm32_uart.hpp"',
         '#include "stm32_usb.hpp"',
+        '#include "stm32_watchdog.hpp"',
         '#include "flash_map.hpp"'
     ]
 
