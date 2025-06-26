@@ -44,6 +44,7 @@ class ConfigurationManager:
         self.peripherals: DefaultDict[str, DefaultDict[str, Dict]] = defaultdict(
             lambda: defaultdict(dict)
         )
+        self.dma_types: Dict[str, str] = {}
         self.dma_requests: Dict[str, str] = {}
         self.dma_configs: DefaultDict[str, List[Dict]] = defaultdict(list)
         self.freertos_config: Dict[str, Any] = {
@@ -286,16 +287,6 @@ class ADCParser(PeripheralParser):
         """Dynamic rule-based mapping for internal ADC channels."""
         family = (self.config.mcu_config.get("Family") or "").upper()
 
-        if "TempSens" in value:
-            match = re.search(r"ADC(\d+)_TempSens_Input", value)
-            if match:
-                adc_num = match.group(1)
-                if family.startswith(("STM32G4", "STM32H7", "STM32H5", "STM32MP1")):
-                    return f"ADC_CHANNEL_TEMPSENSOR_ADC{adc_num}"
-                else:
-                    return "ADC_CHANNEL_TEMPSENSOR"
-            return "ADC_CHANNEL_TEMPSENSOR"
-
         if "Vref" in value:
             return "ADC_CHANNEL_VREFINT"
 
@@ -358,11 +349,6 @@ class ADCParser(PeripheralParser):
         # Split and process all comma-separated values
         for entry in raw_value.split(","):
             cleaned_entry = entry.strip()
-            mcu_family = (self.config.mcu_config.get("Family") or "").upper()
-            if not mcu_family.startswith(
-                    ("STM32G4", "STM32H7", "STM32H5", "STM32MP1")
-            ) and cleaned_entry.endswith(f"_{adc_name}"):
-                cleaned_entry = cleaned_entry.rsplit("_", 1)[0]
 
             # Validate entry format using regex
             if self._is_valid_channel(cleaned_entry):
@@ -723,9 +709,12 @@ class USBParser(PeripheralParser):
 # DMA Parser
 # --------------------------
 class DMAParser(PeripheralParser):
-    """Parses and structures DMA configurations from .ioc files"""
+    """
+    Parses and structures DMA/BDMA configurations from .ioc files
+    and links them to corresponding peripherals.
+    """
 
-    # Enhanced property mapping: CubeMX param → friendly name
+    # Maps CubeMX DMA config properties to internal fields and conversion logic
     _PROPERTY_MAP = {
         "Instance": ("stream", str),
         "Direction": ("direction", lambda v: v.split("_")[-1]),
@@ -742,49 +731,55 @@ class DMAParser(PeripheralParser):
     }
 
     def parse(self, p_type: str) -> None:
-        """Three-phase parsing workflow"""
-        self._parse_requests()
-        self._parse_configs()
+        """
+        Entry point: Parses all DMA and BDMA configurations in the .ioc data.
+        Handles both Dma. and Bdma. prefixes.
+        """
+        for prefix, dma_type in (("Dma", "DMA"), ("Bdma", "BDMA")):
+            self._parse_requests(prefix, dma_type)
+            self._parse_configs(prefix, dma_type)
         self._link_configs()
 
-    def _parse_requests(self) -> None:
-        """Extract DMA request mapping (RequestID → Peripheral)"""
+    def _parse_requests(self, prefix="Dma", dma_type="DMA") -> None:
+        """
+        Extracts DMA/BDMA request mappings: (RequestID → Peripheral).
+        Stores the mapping and its type for each request.
+        """
         for key, value in self.raw_map.items():
-            if key.startswith("Dma.Request"):
-                # Handle keys like: Dma.Request11=ADC1
+            if key.startswith(f"{prefix}.Request"):
                 req_id = key.split("Request")[1].split("=")[0].strip()
-                self.config.dma_requests[req_id] = value
+                self.config.dma_requests[req_id] = value  # Store peripheral as string
+                self.config.dma_types[req_id] = dma_type  # Store DMA type (DMA or BDMA)
 
-    def _parse_configs(self) -> None:
-        """Convert raw DMA configs to structured format"""
+    def _parse_configs(self, prefix="Dma", dma_type="DMA") -> None:
+        """
+        Parses and structures DMA/BDMA stream/instance configurations
+        for each peripheral and request ID.
+        """
         config_map = defaultdict(dict)
-
-        # Phase 1: Group raw properties by config key
         for key, value in self.raw_map.items():
-            if not key.startswith("Dma.") or key.count(".") < 2:
+            # Only process keys of format Dma.<Periph>.<ReqID>.<Prop>
+            if not key.startswith(f"{prefix}.") or key.count(".") < 2:
                 continue
-
-            # Parse key structure: Dma.ADC1.11.Direction → (peripheral, req_id, prop)
             parts = key.split(".")
             peripheral = parts[1]
             req_id = parts[2]
             prop = parts[3] if len(parts) > 3 else "Instance"
-
             config_key = f"{peripheral}_{req_id}"
             config_map[config_key][prop] = value
             config_map[config_key]["_request_id"] = req_id
 
-        # Phase 2: Convert to structured format
+        # Map and convert all recognized properties into a structured dictionary
         for config_key, props in config_map.items():
+            req_id = props.get("_request_id", "")
+            dma_type = self.config.dma_types.get(req_id, "DMA")
             structured = {
-                "request_id": props.get("_request_id", ""),
-                "peripheral": self.config.dma_requests.get(
-                    props.get("_request_id", ""), "Unknown"
-                ),
+                "request_id": req_id,
+                "peripheral": self.config.dma_requests.get(req_id, "Unknown"),
+                "dma_type": dma_type,
                 "stream": props.get("Instance", ""),
             }
-
-            # Property conversion
+            # Convert all other properties using the property map
             for cube_prop, (field, converter) in self._PROPERTY_MAP.items():
                 if cube_prop in props:
                     try:
@@ -793,33 +788,40 @@ class DMAParser(PeripheralParser):
                         logging.warning(
                             f"DMA property conversion failed for {config_key}.{cube_prop}: {str(e)}"
                         )
-
             self.config.dma_configs[config_key] = structured
 
     def _link_configs(self) -> None:
-        """Link DMA configs to corresponding peripherals"""
+        """
+        Links structured DMA/BDMA config objects to their respective peripherals.
+        Marks dma_type for each config, and for each TX/RX config,
+        automatically sets DMA_TX/DMA_RX and their type for buffer generation.
+        """
         for config_key, cfg in self.config.dma_configs.items():
-            # Extract direction from peripheral name (e.g. SPI1_RX → SPI1, RX)
             peripheral_full = cfg["peripheral"]
+            dma_type = cfg.get("dma_type", "DMA")
             if "_" in peripheral_full:
-                p_name, direction = peripheral_full.split("_", 1)
+                # Split peripheral and direction (e.g., "USART1_TX")
+                p_name, direction = peripheral_full.rsplit("_", 1)
                 direction = direction.lower()
             else:
                 p_name = peripheral_full
                 direction = "general"
-
-            # Find matching peripheral
-            for p_type in ["SPI", "I2C", "USART", "ADC", "TIM"]:
+            # Search for the peripheral in all possible types
+            for p_type in ["SPI", "I2C", "USART", "LPUART", "ADC", "TIM"]:
                 if p_name in self.config.peripherals.get(p_type, {}):
                     dir_key = f"dma_{direction}" if direction != "general" else "dma"
-
-                    # Initialize DMA structure if needed
                     if "dma" not in self.config.peripherals[p_type][p_name]:
                         self.config.peripherals[p_type][p_name]["dma"] = {}
-
-                    # Store configuration
+                    # Store DMA config with type marking
                     self.config.peripherals[p_type][p_name]["dma"][dir_key] = cfg
-                    break
+                    # Automatically enable DMA_TX/DMA_RX flags for buffer generation
+                    if direction == "tx":
+                        self.config.peripherals[p_type][p_name]["DMA_TX"] = "ENABLE"
+                        self.config.peripherals[p_type][p_name]["DMA_TX_TYPE"] = dma_type
+                    elif direction == "rx":
+                        self.config.peripherals[p_type][p_name]["DMA_RX"] = "ENABLE"
+                        self.config.peripherals[p_type][p_name]["DMA_RX_TYPE"] = dma_type
+                    break  # Stop searching once found
 
 
 class ThreadXParser(PeripheralParser):

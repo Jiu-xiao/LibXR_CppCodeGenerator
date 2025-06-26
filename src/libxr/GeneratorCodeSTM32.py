@@ -301,59 +301,108 @@ DMA_DEFAULT_SIZES = {
 
 
 def generate_dma_resources(project_data: dict) -> str:
-    """Generate DMA buffers for all peripherals with enhanced compatibility"""
+    """
+    Generate DMA buffer definitions for all relevant peripherals,
+    using per-buffer 'dma_section' config.
+    - Reads libxr_settings['SPI'/'USART'/...][instance]['dma_section']
+    - If section is empty, no attribute is added; if not, __attribute__((section("..."))) is added
+    Returns generated C code as string.
+    """
     dma_code = []
+    # Default section settings
+    DEFAULT_SECTIONS = {
+        "DMA": "",
+        "BDMA": "",
+    }
 
+    def get_buf_section(user_section: str, dma_type: str) -> str:
+        """
+        Return buffer section name:
+        - If user config is set, use it.
+        - Otherwise, use default by dma_type.
+        """
+        if user_section:  # User configuration takes priority
+            return user_section
+        return DEFAULT_SECTIONS.get(dma_type, "")
+
+    # Iterate all peripherals
     for p_type_raw, instances in project_data.get("Peripherals", {}).items():
+        # Normalize peripheral type (e.g. "spi1" -> "SPI")
         match = re.match(r'([A-Za-z0-9]+?)(\d*)$', p_type_raw)
         p_type_base = match.group(1).upper() if match else p_type_raw.upper()
 
+        # Ensure settings dict exists for this peripheral
         if p_type_base not in libxr_settings:
             libxr_settings[p_type_base] = {}
 
+        # SPI/USART/UART/LPUART
         if p_type_base in ["SPI", "USART", "UART", "LPUART"]:
             for instance, config in instances.items():
-                dma_tx = config.get("DMA_TX", "DISABLE") == "ENABLE"
-                dma_rx = config.get("DMA_RX", "DISABLE") == "ENABLE"
-                if not (dma_tx or dma_rx):
-                    continue
-
+                # Check DMA enable flags
+                tx_dma = config.get("DMA_TX", "DISABLE") == "ENABLE"
+                rx_dma = config.get("DMA_RX", "DISABLE") == "ENABLE"
+                # Use configured DMA type if available, fallback to "DMA"
+                dma_type = config.get("DMA_TX_TYPE", config.get("DMA_RX_TYPE", "DMA"))
+                # Instance name for variable
                 instance_lower = instance.lower()
                 instance_config = libxr_settings[p_type_base].setdefault(instance_lower, {})
-
                 tx_size = instance_config.setdefault(
                     "tx_buffer_size",
-                    DMA_DEFAULT_SIZES[p_type_base]["tx"]
+                    DMA_DEFAULT_SIZES.get(p_type_base, {}).get("tx", 32)
                 )
                 rx_size = instance_config.setdefault(
                     "rx_buffer_size",
-                    DMA_DEFAULT_SIZES[p_type_base]["rx"]
+                    DMA_DEFAULT_SIZES.get(p_type_base, {}).get("rx", 32)
                 )
+                # Get dma_section config or assign default
+                dma_section = instance_config.get("dma_section", None)
+                if not dma_section:
+                    auto_section = get_buf_section("", dma_type)
+                    sec_str = f' __attribute__((section("{auto_section}")))' if auto_section else ""
+                else:
+                    sec_str = f' __attribute__((section("{dma_section}")))' if dma_section else ""
 
                 buf_code = []
-                if dma_tx:
-                    buf_code.append(f"static uint8_t {instance_lower}_tx_buf[{tx_size}];")
-                if dma_rx:
-                    buf_code.append(f"static uint8_t {instance_lower}_rx_buf[{rx_size}];")
-
+                if tx_dma:
+                    buf_code.append(f'static uint8_t {instance_lower}_tx_buf[{tx_size}]{sec_str};')
+                if rx_dma:
+                    buf_code.append(f'static uint8_t {instance_lower}_rx_buf[{rx_size}]{sec_str};')
                 if buf_code:
                     dma_code.append("\n".join(buf_code))
 
+        # I2C/ADC
         elif p_type_base in ["I2C", "ADC"]:
             for instance, config in instances.items():
+                dma_type = config.get("DMA_RX_TYPE", "DMA")  # Only RX DMA on some chips
                 instance_lower = instance.lower()
                 instance_config = libxr_settings[p_type_base].setdefault(instance_lower, {})
-
                 buf_size = instance_config.setdefault(
                     "buffer_size",
                     DMA_DEFAULT_SIZES[p_type_base]["buffer"]
                 )
-                if p_type_base in ["ADC"]:
-                    dma_code.append(f"static uint16_t {instance_lower}_buf[{int(buf_size/2)}];")
-                else:
-                    dma_code.append(f"static uint8_t {instance_lower}_buf[{buf_size}];")
+                dma_section = instance_config.get("dma_section", None)
+                if not dma_section:
+                    dma_section = get_buf_section("", dma_type)
+                    instance_config["dma_section"] = dma_section
+                sec_str = f' __attribute__((section("{dma_section}")))' if dma_section else ""
 
-    return "/* DMA Resources */\n" + "\n".join(dma_code) if dma_code else ""
+                # ADC buffer is uint16_t, I2C is uint8_t
+                if p_type_base == "ADC":
+                    dma_code.append(
+                        f"static uint16_t {instance_lower}_buf[{int(buf_size/2)}]{sec_str};"
+                    )
+                else:
+                    dma_code.append(
+                        f"static uint8_t {instance_lower}_buf[{buf_size}]{sec_str};"
+                    )
+
+    # Final output with section header if any code generated
+    if dma_code:
+        output = "/* DMA Resources generated by generate_dma_resources() */\n"
+        output += "\n".join(dma_code)
+    else:
+        output = "/* No DMA Resources generated. */"
+    return output
 
 
 # --------------------------
