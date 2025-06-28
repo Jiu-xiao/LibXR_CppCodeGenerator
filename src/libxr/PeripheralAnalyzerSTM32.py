@@ -219,11 +219,11 @@ class TIMParser(PeripheralParser):
                 if re.match(r"^TIM_CHANNEL_\d+$", channel_id):
                     ch_num = channel_id.split("_")[-1]
                     ch_name = f"CH{ch_num}"
-                    pin_label = self._get_associated_pin_label(tim_name)
-
+                    label, is_n = self._get_associated_pin_label(tim_name)
                     self.config.peripherals["TIM"][tim_name]["Channels"][ch_name] = {
-                        "Label": pin_label,
+                        "Label": label,
                         "PWM": True,
+                        "Complementary": is_n,
                     }
             elif "Period" in parts[1]:
                 self.config.peripherals[p_type][tim_name]["Period"] = sanitize_numeric(
@@ -249,22 +249,36 @@ class TIMParser(PeripheralParser):
             }
 
     def _handle_pwm_channel(self, tim_name: str, parts: list, value: str) -> None:
-        """Extract PWM channel configuration."""
-        if ch_match := re.search(r"CH(\d+)", parts[1]):
-            ch_num = ch_match.group(1)
-            channel_id = f"CH{ch_num}"
-            pin_label = self._get_associated_pin_label(parts[0])
+        """
+        Extract PWM channel configuration.
+        Parse TIMx.Channel-PWM Generation2 CH2N=TIM_CHANNEL_2 lines.
+        """
+        # Use regex to capture CHx or CHxN
+        match = re.search(r"(CH\d+N?)$", parts[1])
+        if not match:
+            return
 
-            self.config.peripherals["TIM"][tim_name]["Channels"][channel_id] = {
-                "Label": pin_label,
-                "PWM": True,
-                "DutyCycle": sanitize_numeric(value) if value.isdigit() else None,
-            }
+        channel_id = match.group(1)
+        is_n = channel_id.endswith("N")
+        pin_label, _ = self._get_associated_pin_label(parts[0])
 
-    def _get_associated_pin_label(self, timer_pin: str) -> str:
-        """Retrieve GPIO label from pin configuration."""
-        return self.config.gpio_pins.get(timer_pin, {}).get("Label", timer_pin)
+        self.config.peripherals["TIM"][tim_name]["Channels"][channel_id] = {
+            "Label": pin_label,
+            "PWM": True,
+            "Complementary": is_n,
+            "DutyCycle": sanitize_numeric(value) if value.isdigit() else None,
+        }
 
+    def _get_associated_pin_label(self, timer_pin: str) -> tuple[str, bool]:
+        """
+        Retrieve GPIO label and whether it's a complementary (N) output.
+        Return: (label, is_complementary)
+        """
+        config = self.config.gpio_pins.get(timer_pin, {})
+        label = config.get("Label", timer_pin)
+        signal = config.get("Signal", "")
+        is_complementary = signal.endswith("N")  # e.g., TIM1_CH1N
+        return label, is_complementary
 
 # --------------------------
 # ADC Parser

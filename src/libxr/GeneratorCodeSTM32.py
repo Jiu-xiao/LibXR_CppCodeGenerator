@@ -170,6 +170,12 @@ def load_configuration(file_path: str, use_xrobot: bool) -> dict:
             if 'terminal_source' in config:
                 libxr_settings['terminal_source'] = config['terminal_source']
 
+            if "Peripherals" in config:
+                empty_keys = [k for k, v in config["Peripherals"].items() if not v or v == {}]
+                for k in empty_keys:
+                    logging.info(f"Skipping empty peripheral config: {k}")
+                    del config["Peripherals"][k]
+
             return config
     except FileNotFoundError:
         logging.error(f"Configuration file not found: {file_path}")
@@ -357,10 +363,9 @@ def generate_dma_resources(project_data: dict) -> str:
                 # Get dma_section config or assign default
                 dma_section = instance_config.get("dma_section", None)
                 if not dma_section:
-                    auto_section = get_buf_section("", dma_type)
-                    sec_str = f' __attribute__((section("{auto_section}")))' if auto_section else ""
-                else:
-                    sec_str = f' __attribute__((section("{dma_section}")))' if dma_section else ""
+                    dma_section = get_buf_section("", dma_type)
+                    instance_config["dma_section"] = dma_section
+                sec_str = f' __attribute__((section("{dma_section}")))' if dma_section else ""
 
                 buf_code = []
                 if tx_dma:
@@ -474,15 +479,20 @@ class PeripheralFactory:
 
     @staticmethod
     def _generate_tim(instance: str, config: dict) -> tuple:
-        """Generate PWM channel instances for TIM peripherals."""
-        channels = config.get('Channels', [])
+        channels = config.get('Channels', {})
         if not channels:
             return ("", "")
         code = ""
-        for ch in channels:
-            ch_num = ch.replace('CH', '')
+        for ch_name, ch_cfg in channels.items():
+            ch_num = ch_name.replace('CH', '').lower()
             dev_name = f"pwm_{instance.lower()}_ch{ch_num}"
-            code += f"  STM32PWM {dev_name}(&h{instance.lower()}, TIM_CHANNEL_{ch_num});\n"
+            complementary = ch_cfg.get("Complementary", False)
+            if complementary:
+                if ch_num.endswith("N") or ch_num.endswith("n"):
+                    ch_num = ch_num[:-1]
+                code += f"  STM32PWM {dev_name}(&h{instance.lower()}, TIM_CHANNEL_{ch_num}, true);\n"
+            else:
+                code += f"  STM32PWM {dev_name}(&h{instance.lower()}, TIM_CHANNEL_{ch_num}, false);\n"
             _register_device(dev_name, "PWM")
         return ("pwm", code)
 
@@ -667,16 +677,16 @@ def generate_gpio_config(project_data: dict) -> str:
 # Watchdog
 def configure_watchdog(project_data: dict) -> str:
     code = ""
-    wdg_config = libxr_settings.setdefault("Watchdog", {})
-    run_as_thread = wdg_config.setdefault("RunAsThread", False)
-    feed_interval = wdg_config.setdefault("FeedInterval", 250)
-
     watchdog_instances = []
     for name, cfg in project_data.get("Peripherals", {}).get("IWDG", {}).items():
         if cfg.get("Enabled"):
             watchdog_instances.append(name.lower())
     if not watchdog_instances:
         return code
+
+    wdg_config = libxr_settings.setdefault("Watchdog", {})
+    run_as_thread = wdg_config.setdefault("RunAsThread", False)
+    feed_interval = wdg_config.setdefault("FeedInterval", 250)
 
     for name in watchdog_instances:
         if run_as_thread:
@@ -717,7 +727,6 @@ def configure_terminal(project_data: dict) -> str:
     else:
         if usb_info:
             code += _setup_usb(usb_info, libxr_settings.get("SYSTEM", "None"))
-            _register_device(f"{uart_devices[0].lower()}", "UART")
 
     if terminal_source != "":
         term_config = libxr_settings.setdefault("Terminal", {})
