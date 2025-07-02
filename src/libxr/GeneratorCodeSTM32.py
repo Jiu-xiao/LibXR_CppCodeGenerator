@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 """STM32 Peripheral Code Generator - Core Module (Optimized)"""
 
-import argparse
 import logging
 import os
 import re
 import sys
 import urllib.request
+import argparse
 import yaml
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
@@ -253,6 +253,7 @@ def _deep_merge(base: dict, update: dict) -> dict:
 def _sanitize_cpp_identifier(name: str) -> str:
     return re.sub(r'\W|^(?=\d)', '_', name)
 
+
 def generate_gpio_alias(port: str, gpio_data: dict, project_data: dict) -> str:
     base_port = port.split("-")[0]
     port_define = f"GPIO{base_port[1]}"
@@ -394,7 +395,7 @@ def generate_dma_resources(project_data: dict) -> str:
                 # ADC buffer is uint16_t, I2C is uint8_t
                 if p_type_base == "ADC":
                     dma_code.append(
-                        f"static uint16_t {instance_lower}_buf[{int(buf_size/2)}]{sec_str};"
+                        f"static uint16_t {instance_lower}_buf[{int(buf_size / 2)}]{sec_str};"
                     )
                 else:
                     dma_code.append(
@@ -440,7 +441,7 @@ class PeripheralFactory:
         vref = adc_config.setdefault('vref', 3.3)
 
         channels = f"  std::array<uint32_t, {len(conversions)}> {instance.lower()}_channels = {{{', '.join(conversions)}}};\n"
-        code = f"  STM32ADC {instance.lower()}(&h{instance.lower()}, {instance.lower()}_buf, {instance.lower()}_channels, {vref});\n"
+        code = f"  STM32ADC {instance.lower()}(&h{instance.lower()}, {instance.lower()}_buf, &{instance.lower()}_channels[0], {len(conversions)}, {vref});\n"
 
         channels_code = channels + code
         index = 0
@@ -544,13 +545,15 @@ class PeripheralFactory:
             # 1. 统一到 libxr_settings
         iwdg_config = libxr_settings['IWDG'].setdefault(instance.lower(), {})
         timeout_ms = iwdg_config.setdefault("timeout_ms", config.get("Configuration", {}).get("timeout_ms", 1000))
-        feed_ms = iwdg_config.setdefault("feed_interval_ms", config.get("Configuration", {}).get("feed_interval_ms", 250))
+        feed_ms = iwdg_config.setdefault("feed_interval_ms",
+                                         config.get("Configuration", {}).get("feed_interval_ms", 250))
         code = (
             f"  STM32Watchdog {instance.lower()}(&h{instance.lower()}, "
             f"{timeout_ms}, {feed_ms});\n"
         )
         _register_device(instance.lower(), "Watchdog")
         return ("main", code)
+
 
 def _generate_header_includes(use_xrobot: bool = False) -> str:
     """Generate essential header inclusions with optional XRobot components."""
@@ -608,7 +611,8 @@ def _generate_extern_declarations(project_data: dict) -> str:
                     externs.add(f'extern uint8_t UserTxBuffer{usb_info['speed']}[APP_TX_DATA_SIZE];')
                     externs.add(f'extern uint8_t UserRxBuffer{usb_info['speed']}[APP_RX_DATA_SIZE];')
             else:
-                handle_type = 'UART_HandleTypeDef' if p_type in ['USART', 'UART', 'LPUART'] else f'{p_type}_HandleTypeDef'
+                handle_type = 'UART_HandleTypeDef' if p_type in ['USART', 'UART',
+                                                                 'LPUART'] else f'{p_type}_HandleTypeDef'
                 if p_type in ['USART', 'UART', 'LPUART']:
                     externs.add(f'extern {handle_type} h{instance.lower().replace("usart", "uart")};')
                 else:
@@ -674,6 +678,7 @@ def generate_gpio_config(project_data: dict) -> str:
         code += f'  STM32GPIO {alias};\n'
     return code
 
+
 # Watchdog
 def configure_watchdog(project_data: dict) -> str:
     code = ""
@@ -689,6 +694,8 @@ def configure_watchdog(project_data: dict) -> str:
     feed_interval = wdg_config.setdefault("feed_interval_ms", 250)
 
     for name in watchdog_instances:
+        code += f"""  {name}.Feed();
+"""
         if run_as_thread:
             thread_stack = wdg_config.setdefault("thread_stack_depth", 1024)
             thread_priority = wdg_config.setdefault("thread_priority", 3)
@@ -702,6 +709,7 @@ def configure_watchdog(project_data: dict) -> str:
   Timer::Start({name}_task);
 """
     return code
+
 
 # --------------------------
 # Terminal Configuration
@@ -767,13 +775,14 @@ def configure_terminal(project_data: dict) -> str:
 def _setup_usb_terminal(usb_info: dict, system: str) -> str:
     if system == 'ThreadX':
         return (
-        "  // STDIO::read_ = uart_cdc.read_port_;\n"
-        "  // STDIO::write_ = uart_cdc.write_port_;\n"
+            "  // STDIO::read_ = uart_cdc.read_port_;\n"
+            "  // STDIO::write_ = uart_cdc.write_port_;\n"
         )
     return (
         "  STDIO::read_ = uart_cdc.read_port_;\n"
         "  STDIO::write_ = uart_cdc.write_port_;\n"
     )
+
 
 def _setup_usb(usb_info: dict, system: str) -> str:
     _register_device('uart_cdc', "UART")
@@ -792,6 +801,7 @@ def _setup_usb(usb_info: dict, system: str) -> str:
         f"UserTxBuffer{usb_info['speed']}, UserRxBuffer{usb_info['speed']}, "
         f"{tx_queue});\n"
     )
+
 
 def _detect_usb_device(project_data: dict) -> dict:
     usb_config = project_data.get("Peripherals", {}).get("USB", {})
@@ -815,6 +825,7 @@ def _detect_usb_device(project_data: dict) -> dict:
         "handler": f"hUsb{mode}{speed}",
         "speed": speed
     }
+
 
 # --------------------------
 # XRobot Integration
@@ -849,6 +860,7 @@ def generate_xrobot_hardware_container() -> str:
             entry_list.append(f"  LibXR::Entry<LibXR::{dev_type}>({{{dev}, {{{alias_str}}}}})")  # With aliases
 
     return f"""\n  LibXR::HardwareContainer peripherals{{\n  {",\n  ".join(entry_list)}\n  }};\n"""
+
 
 # --------------------------
 # Main Generator
@@ -926,6 +938,7 @@ def generate_flash_map_cpp(flash_info: dict) -> str:
     lines.append("};\n")
     lines.append("constexpr size_t FLASH_SECTOR_NUMBER = sizeof(FLASH_SECTORS) / sizeof(LibXR::FlashSector);")
     return "\n".join(lines)
+
 
 def inject_flash_layout(project_data: dict, output_dir: str) -> None:
     """

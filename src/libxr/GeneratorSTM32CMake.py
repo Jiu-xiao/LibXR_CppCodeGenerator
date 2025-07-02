@@ -14,9 +14,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(LIBXR_SYSTEM _LIBXR_SYSTEM_)
 set(LIBXR_DRIVER st)
 add_subdirectory(Middlewares/Third_Party/LibXR)
-target_link_libraries(
-    xr
-    stm32cubemx
+target_link_libraries(xr
+    PUBLIC stm32cubemx
 )
 
 target_include_directories(xr
@@ -47,6 +46,22 @@ file(
 target_sources(${CMAKE_PROJECT_NAME}
     PRIVATE ${LIBXR_USER_SOURCES}
 )
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE -Og)
+    target_compile_options(xr PRIVATE -O2)
+    if(TARGET FreeRTOS)
+        target_compile_options(FreeRTOS PRIVATE -O2)
+    endif()
+
+    if(TARGET STM32_Drivers)
+        target_compile_options(STM32_Drivers PRIVATE -O2)
+    endif()
+
+    if(TARGET USB_Device_Library)
+        target_compile_options(USB_Device_Library PRIVATE -O2)
+    endif()
+endif()
 '''
 )
 
