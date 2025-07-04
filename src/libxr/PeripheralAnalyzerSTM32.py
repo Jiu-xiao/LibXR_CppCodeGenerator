@@ -660,8 +660,8 @@ class CANParser(PeripheralParser):
                     "AutoWakeup": False,
                 },
                 "FDCAN": {
-                    "NominalBaudRate": None,
-                    "DataBaudRate": None,
+                    "NominalPrescaler": None,
+                    "BaudRateNominal": None,
                     "FrameFormat": None,
                     "StdFilters": 0,
                     "ExtFilters": 0,
@@ -688,8 +688,8 @@ class CANParser(PeripheralParser):
     def _handle_fdcan_params(self, can_name: str, prop: str, value: str) -> None:
         """Process FDCAN specific parameters."""
         param_map = {
-            "NominalPrescaler": ("NominalBaudRate", float),
-            "DataPrescaler": ("DataBaudRate", float),
+            "NominalPrescaler": ("NominalPrescaler", float),
+            "BaudRateNominal": ("CalculateBaudRateNominal", float),
             "FrameFormat": ("FrameFormat", str),
             "StdFiltersNbr": ("StdFilters", int),
             "ExtFiltersNbr": ("ExtFilters", int),
