@@ -280,6 +280,7 @@ class TIMParser(PeripheralParser):
         is_complementary = signal.endswith("N")  # e.g., TIM1_CH1N
         return label, is_complementary
 
+
 # --------------------------
 # ADC Parser
 # --------------------------
@@ -396,6 +397,70 @@ class ADCParser(PeripheralParser):
             adc_cfg["RegularConversions"] = list(
                 dict.fromkeys(adc_cfg["RegularConversions"])
             )
+
+
+# --------------------------
+# DAC Parser
+# --------------------------
+import re
+
+class DACParser(PeripheralParser):
+    """Parse DAC peripheral configurations."""
+
+    def parse(self, p_type: str) -> None:
+        for key, value in self.raw_map.items():
+            # 1. SH.COMP_DAC*_group. Compatible with single/multi-channel DAC recognition
+            m = re.match(r"^SH\.COMP_DAC(\d{1,2})_group\.\d+$", key)
+            if m:
+                digits = m.group(1)
+                out, alias = value.split(",", 1)
+                if len(digits) == 1:
+                    # Only one digit (e.g., COMP_DAC2_group): unique DAC, OUTx (usually DAC's OUT1/OUT2)
+                    self._ensure_dac_instance("DAC")
+                    self.config.peripherals["DAC"]["DAC"]["Channels"][out] = alias
+                elif len(digits) == 2:
+                    # Two digits (e.g., COMP_DAC12_group): DAC1's OUT2
+                    dac_idx = digits[0]
+                    out_idx = digits[1]
+                    dac_name = f"DAC{dac_idx}"
+                    out_name = f"OUT{out_idx}"
+                    self._ensure_dac_instance(dac_name)
+                    self.config.peripherals["DAC"][dac_name]["Channels"][out_name] = alias
+                continue
+
+            # 2. Compatible with new CubeMX format (e.g. DAC1.DAC_Channel-DAC_OUT1=DAC_CHANNEL_1)
+            if key.startswith("DAC"):
+                self._parse_dac_property(key, value)
+
+    def _parse_dac_property(self, key: str, value: str) -> None:
+        parts = key.split(".")
+        if len(parts) < 2:
+            return
+        dac_name = parts[0]
+        setting = parts[1]
+        self._ensure_dac_instance(dac_name)
+        if "Channel" in setting:
+            match = re.match(r"DAC_Channel-DAC_OUT(\d+)", setting)
+            if match:
+                ch_num = match.group(1)
+                ch_key = f"OUT{ch_num}"
+                ch_val = value.strip()
+                self.config.peripherals["DAC"][dac_name]["Channels"][ch_key] = ch_val
+        elif "Trigger" in setting:
+            self.config.peripherals["DAC"][dac_name]["Trigger"] = value
+        elif "DMA" in setting:
+            self.config.peripherals["DAC"][dac_name]["DMA"] = value
+        elif "OutputBuffer" in setting:
+            self.config.peripherals["DAC"][dac_name]["OutputBuffer"] = value
+
+    def _ensure_dac_instance(self, dac_name: str) -> None:
+        if dac_name not in self.config.peripherals["DAC"]:
+            self.config.peripherals["DAC"][dac_name] = {
+                "Channels": {},
+                "Trigger": None,
+                "DMA": None,
+                "OutputBuffer": None,
+            }
 
 
 # --------------------------
@@ -864,6 +929,7 @@ class ThreadXParser(PeripheralParser):
                         "StackSize": f"{sanitize_numeric(value)}B"
                     }
 
+
 # --------------------------
 # Watchdog Parser
 # --------------------------
@@ -914,6 +980,7 @@ class WatchdogParser(PeripheralParser):
     def _ensure_wdg_instance(self, wdg_type: str, wdg_name: str) -> None:
         if wdg_name not in self.config.peripherals[wdg_type]:
             self.config.peripherals[wdg_type][wdg_name] = {}
+
 
 # --------------------------
 # FreeRTOS Parser
@@ -979,6 +1046,7 @@ def parse_ioc_file(ioc_path: str) -> Optional[Dict[str, Any]]:
         McuParser(config, raw_map),
         TIMParser(config, raw_map),
         ADCParser(config, raw_map),
+        DACParser(config, raw_map),
         SPIParser(config, raw_map),
         USARTParser(config, raw_map),
         I2CParser(config, raw_map),
@@ -1099,12 +1167,16 @@ def print_summary(data: Dict[str, Any]) -> None:
             print(
                 f"  {k}: Enabled={v.get('Enabled', False)}, Prescaler={v.get('Prescaler')}, Window={v.get('Window')}, Counter={v.get('Counter')}")
 
+
 def _format_peripheral_config(p_type: str, config: Dict) -> str:
     """Generate single-line peripheral configuration summary."""
     if p_type == "TIM":
         return f"Mode={config.get('Mode')} | Period={config.get('Period')}"
     elif p_type == "ADC":
         return f"Channels={len(config.get('RegularConversions', []))}"
+    elif p_type == "DAC":
+        chs = config.get("Channels", {})
+        return f"Channels={list(chs.keys())}" if chs else "Channels=0"
     elif p_type in ["SPI", "I2C", "USART"]:
         return f"Baud={config.get('BaudRate') or config.get('ClockSpeed')}"
     return ""

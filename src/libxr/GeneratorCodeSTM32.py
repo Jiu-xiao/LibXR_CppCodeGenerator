@@ -419,6 +419,7 @@ class PeripheralFactory:
     def create(p_type: str, instance: str, config: dict) -> str:
         handler_map = {
             "ADC": PeripheralFactory._generate_adc,
+            "DAC": PeripheralFactory._generate_dac,
             "TIM": PeripheralFactory._generate_tim,
             "FDCAN": PeripheralFactory._generate_canfd,
             "CAN": PeripheralFactory._generate_can,
@@ -452,7 +453,33 @@ class PeripheralFactory:
             _register_device(f"{instance.lower()}_{channel.lower()}", "ADC")
             index = index + 1
 
-        return ("adc", channels_code)
+        return "adc", channels_code
+
+    @staticmethod
+    def _generate_dac(instance: str, config: dict) -> tuple:
+        """
+        Generate DAC initialization code.
+        Always use variable name as <instance>_<out_name> (e.g., dac1_out2).
+        """
+        channels = config.get("Channels", {})
+        if not channels:
+            return "", ""
+        dac_config = libxr_settings['DAC'].setdefault(instance.lower(), {})
+        init_voltage = dac_config.setdefault('init_voltage', 0.0)
+        vref = dac_config.setdefault('vref', 3.3)
+        codes = []
+        for out_name, channel_id in channels.items():
+            if channel_id.startswith("DAC_OUT"):
+                m = re.search(r'DAC_OUT(\d+)', channel_id)
+                channel_id = "DAC_CHANNEL_" + m.group(1)
+            var_name = f"{instance.lower()}_{out_name.lower()}"
+            if var_name.startswith("dac_dac_"):
+                var_name = var_name.replace("dac_dac_", "dac_")
+            codes.append(
+                f"  STM32DAC {var_name}(&h{instance.lower()}, {channel_id}, {init_voltage}, {vref});"
+            )
+            _register_device(var_name, "DAC")
+        return "main", "\n".join(codes) + "\n"
 
     @staticmethod
     def _generate_uart(instance: str, config: dict) -> tuple:
@@ -467,7 +494,7 @@ class PeripheralFactory:
         code = f"  STM32UART {instance.lower()}(&h{instance.lower().replace('usart', 'uart')},\n" \
                f"              {rx_buf}, {tx_buf}, {tx_queue});\n"
         _register_device(f"{instance.lower()}", "UART")
-        return ("main", code)
+        return "main", code
 
     @staticmethod
     def _generate_i2c(instance: str, config: dict) -> tuple:
@@ -482,7 +509,7 @@ class PeripheralFactory:
     def _generate_tim(instance: str, config: dict) -> tuple:
         channels = config.get('Channels', {})
         if not channels:
-            return ("", "")
+            return "", ""
         code = ""
         for ch_name, ch_cfg in channels.items():
             ch_num = ch_name.replace('CH', '').lower()
@@ -495,7 +522,7 @@ class PeripheralFactory:
             else:
                 code += f"  STM32PWM {dev_name}(&h{instance.lower()}, TIM_CHANNEL_{ch_num}, false);\n"
             _register_device(dev_name, "PWM")
-        return ("pwm", code)
+        return "pwm", code
 
     @staticmethod
     def _generate_canfd(instance: str, config: dict) -> tuple:
@@ -536,13 +563,8 @@ class PeripheralFactory:
 
     @staticmethod
     def _generate_iwdg(instance: str, config: dict) -> tuple:
-        IWDG_DEFAULT_CONFIG = {
-            "timeout_ms": 1000,
-            "feed_interval_ms": 250
-        }
         if not config.get("Enabled"):
-            return ("", "")
-            # 1. 统一到 libxr_settings
+            return "", ""
         iwdg_config = libxr_settings['IWDG'].setdefault(instance.lower(), {})
         timeout_ms = iwdg_config.setdefault("timeout_ms", config.get("Configuration", {}).get("timeout_ms", 1000))
         feed_ms = iwdg_config.setdefault("feed_interval_ms",
@@ -552,7 +574,7 @@ class PeripheralFactory:
             f"{timeout_ms}, {feed_ms});\n"
         )
         _register_device(instance.lower(), "Watchdog")
-        return ("main", code)
+        return "main", code
 
 
 def _generate_header_includes(use_xrobot: bool = False) -> str:
@@ -564,6 +586,7 @@ def _generate_header_includes(use_xrobot: bool = False) -> str:
         '#include "stm32_adc.hpp"',
         '#include "stm32_can.hpp"',
         '#include "stm32_canfd.hpp"',
+        '#include "stm32_dac.hpp"',
         '#include "stm32_gpio.hpp"',
         '#include "stm32_i2c.hpp"',
         '#include "stm32_power.hpp"',
@@ -610,6 +633,8 @@ def _generate_extern_declarations(project_data: dict) -> str:
                     externs.add(f'extern USBD_HandleTypeDef {usb_info['handler']};')
                     externs.add(f'extern uint8_t UserTxBuffer{usb_info['speed']}[APP_TX_DATA_SIZE];')
                     externs.add(f'extern uint8_t UserRxBuffer{usb_info['speed']}[APP_RX_DATA_SIZE];')
+            elif p_type == 'DAC':
+                externs.add(f'extern DAC_HandleTypeDef h{instance.lower()};')
             else:
                 handle_type = 'UART_HandleTypeDef' if p_type in ['USART', 'UART',
                                                                  'LPUART'] else f'{p_type}_HandleTypeDef'
