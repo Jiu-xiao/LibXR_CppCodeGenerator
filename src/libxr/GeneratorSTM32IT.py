@@ -71,7 +71,7 @@ extern void STM32_USB_ISR_Handler_F1(void);
             # Insert callback to USER CODE BEGIN ... IRQn 1 block
             if huart_var:
                 user_code_begin_pattern = re.compile(
-                    rf"/\*\s*USER CODE BEGIN {irq_func_name}_IRQn 1\s*\*/"
+                    rf"/\*\s*USER CODE BEGIN {irq_func_name}_IRQn 0\s*\*/"
                 )
                 for k in range(i, len(content)):
                     if user_code_begin_pattern.search(content[k]):
@@ -84,12 +84,24 @@ extern void STM32_USB_ISR_Handler_F1(void);
 
             # Handle USB IRQ
             if irq_func_name in ("USB_HP_CAN1_TX", "USB_LP_CAN1_RX0"):
-                user_code_begin_pattern = re.compile(
+                # USER CODE BEGIN ... IRQn 0
+                user_code_begin_0_pattern = re.compile(
+                    rf"/\*\s*USER CODE BEGIN {irq_func_name}_IRQn 0\s*\*/"
+                )
+                for k in range(i, len(content)):
+                    if user_code_begin_0_pattern.search(content[k]):
+                        if usb_callback.strip() not in "".join(content[k: k + 8]):
+                            content.insert(k + 1, usb_callback + "\n")
+                            modified = True
+                        break
+
+                # USER CODE BEGIN ... IRQn 1
+                user_code_begin_1_pattern = re.compile(
                     rf"/\*\s*USER CODE BEGIN {irq_func_name}_IRQn 1\s*\*/"
                 )
                 for k in range(i, len(content)):
-                    if user_code_begin_pattern.search(content[k]):
-                        if usb_callback.strip() not in "".join(content[k : k + 8]):
+                    if user_code_begin_1_pattern.search(content[k]):
+                        if usb_callback.strip() not in "".join(content[k: k + 8]):
                             content.insert(k + 1, usb_callback + "\n")
                             modified = True
                             modified_functions.append(irq_func_name)

@@ -300,8 +300,8 @@ usage: xr_stm32_it [-h] input_dir
 - 查找 `USB_HP_CAN1_TX_IRQHandler` 和 `USB_LP_CAN1_RX0_IRQHandler` 中断函数  
   Find `USB_HP_CAN1_TX_IRQHandler` and `USB_LP_CAN1_RX0_IRQHandler` handlers
 
-- 向对应中断函数的 `/* USER CODE BEGIN XXX_IRQn 1 */` 区域插入：  
-  Add to the `/* USER CODE BEGIN XXX_IRQn 1 */` section of the corresponding interrupt function
+- 向对应中断函数的 `/* USER CODE BEGIN XXX_IRQn 0/1 */` 区域插入：  
+  Add to the `/* USER CODE BEGIN XXX_IRQn 0/1 */` section of the corresponding interrupt function
   
 ```c
   /* LibXR UART IDLE callback (Auto-generated) */
