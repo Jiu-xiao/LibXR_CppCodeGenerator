@@ -61,6 +61,7 @@ pip install libxr
 ```bash
 git clone https://github.com/Jiu-xiao/LibXR_CppCodeGenerator.git
 cd LibXR_CppCodeGenerator
+python3 ./scripts/gen_libxr_version.py
 pip install -e .
 ```
 
@@ -128,6 +129,11 @@ Parses `.ioc`, generates YAML and C++ code, patches interrupt handlers, and init
 
   生成 XRobot Glue 代码  
   Enable XRobot glue code generation.
+
+- `--commit`
+  
+  指定 LibXR 仓库commit版本  
+  Specify the LibXR repository commit version
 
 #### 📦 输出内容 (Outputs)
 

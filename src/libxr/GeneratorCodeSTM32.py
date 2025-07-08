@@ -1006,6 +1006,10 @@ def inject_flash_layout(project_data: dict, output_dir: str) -> None:
 
 
 def main():
+    from libxr.PackageInfo import LibXRPackageInfo
+
+    LibXRPackageInfo.check_and_print()
+
     try:
         args = parse_arguments()
 

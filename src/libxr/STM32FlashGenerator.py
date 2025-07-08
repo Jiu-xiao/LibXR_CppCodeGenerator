@@ -140,6 +140,10 @@ def flash_info_to_dict(info: FlashInfo) -> dict:
 
 
 def main():
+    from libxr.PackageInfo import LibXRPackageInfo
+
+    LibXRPackageInfo.check_and_print()
+
     """Command line interface for STM32 flash information tool"""
 
     def validate_model(model: str) -> bool:

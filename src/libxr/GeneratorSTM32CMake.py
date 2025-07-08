@@ -68,6 +68,10 @@ endif()
 include_cmake_cmd = "include(${CMAKE_CURRENT_LIST_DIR}/cmake/LibXR.CMake)\n"
 
 def main():
+    from libxr.PackageInfo import LibXRPackageInfo
+
+    LibXRPackageInfo.check_and_print()
+
     parser = argparse.ArgumentParser(description="Generate CMake file for LibXR.")
     parser.add_argument("input_dir", type=str, help="CubeMX CMake Project Directory")
 
@@ -75,7 +79,7 @@ def main():
     input_directory = args.input_dir
 
     if not os.path.isdir(input_directory):
-        print("Input directory does not exist.")
+        logging.error("Input directory does not exist.")
         exit(1)
 
     build_path = os.path.join(input_directory, "build")
@@ -103,7 +107,7 @@ def main():
         f.write(file.replace("_LIBXR_SYSTEM_", system))
     logging.info(f"Generated LibXR.CMake at: {file_path}")
 
-    print("LibXR.CMake generated successfully.")
+    logging.info("LibXR.CMake generated successfully.")
 
     main_cmake_path = input_directory + "/CMakeLists.txt"
     if os.path.exists(main_cmake_path):

@@ -5,7 +5,6 @@ import sys
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
-
 def find_toolchain_file(directory):
     """
     Searches for gcc-arm-none-eabi.cmake in the specified directory.
@@ -13,8 +12,8 @@ def find_toolchain_file(directory):
     :return: The path to the found file, or None if not found.
     """
     if not os.path.isdir(directory):
-        print(
-            f"ERROR: The specified directory '{directory}' does not exist or is invalid.",
+        logging.error(
+            f"The specified directory '{directory}' does not exist or is invalid.",
             file=sys.stderr,
         )
         return None
@@ -56,10 +55,10 @@ def parse_cmake_file(file_path):
                     )
 
     except FileNotFoundError:
-        print(f"ERROR: CMake file '{file_path}' not found.", file=sys.stderr)
+        logging.error(f"CMake file '{file_path}' not found.", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
-        print(f"ERROR: Failed to parse the CMake file - {e}", file=sys.stderr)
+        logging.error(f"Failed to parse the CMake file - {e}", file=sys.stderr)
         sys.exit(1)
 
     return data
@@ -201,6 +200,10 @@ endif()
 
 
 def main():
+    from libxr.PackageInfo import LibXRPackageInfo
+
+    LibXRPackageInfo.check_and_print()
+
     parser = argparse.ArgumentParser(
         description="Parse the CMake configuration file and extract key data. Overwrites the original file by default."
     )
@@ -219,8 +222,8 @@ def main():
     # Locate the CMake configuration file
     toolchain_file = find_toolchain_file(args.input_dir)
     if not toolchain_file:
-        print(
-            f"ERROR: Could not find 'gcc-arm-none-eabi.cmake' in '{args.input_dir}/cmake'.",
+        logging.error(
+            f"Could not find 'gcc-arm-none-eabi.cmake' in '{args.input_dir}/cmake'.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -231,7 +234,7 @@ def main():
         logging.error(f"CMake file not found: {cmake_file_path}")
         sys.exit(1)
 
-    print(f"Found CMake file: {toolchain_file}")
+    logging.info(f"Found CMake file: {toolchain_file}")
 
     # Parse the CMake configuration file
     data = parse_cmake_file(toolchain_file)
@@ -243,13 +246,13 @@ def main():
     # Default to overwriting the original file
     output_file = args.output_file if args.output_file else toolchain_file
 
-    print(f"Writing output to: {output_file}")
+    logging.info(f"Writing output to: {output_file}")
 
     # Check if the linker script exists
     linker_script_path = os.path.join(args.input_dir, data["linker_script"])
     if not os.path.exists(linker_script_path):
-        print(
-            f"ERROR: Linker script '{data['linker_script']}' not found.",
+        logging.error(
+            f"Linker script '{data['linker_script']}' not found.",
             file=sys.stderr,
         )
         sys.exit(-1)
@@ -272,8 +275,8 @@ def main():
         with open(cmake_file_path, "r", encoding="utf-8") as out_file:
             cmake_file_lines = out_file.readlines()
     except Exception as e:
-        print(
-            f"ERROR: Failed to write to file '{cmake_file_path}' - {e}", file=sys.stderr
+        logging.error(
+            f"Failed to write to file '{cmake_file_path}' - {e}", file=sys.stderr
         )
         sys.exit(1)
 

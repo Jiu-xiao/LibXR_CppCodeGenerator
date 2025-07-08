@@ -1186,6 +1186,10 @@ def _format_peripheral_config(p_type: str, config: Dict) -> str:
 # Main Entry Point
 # --------------------------
 def main() -> None:
+    from libxr.PackageInfo import LibXRPackageInfo
+
+    LibXRPackageInfo.check_and_print()
+
     """Command line interface handler."""
     parser = argparse.ArgumentParser(
         description="STM32CubeMX IOC Configuration Parser v2.0",
