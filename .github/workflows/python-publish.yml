@@ -89,6 +89,7 @@ jobs:
 
       - name: Build Package
         run: |
+          python ./scripts/gen_libxr_version.py
           python -m build
 
       - name: Check Package Metadata
