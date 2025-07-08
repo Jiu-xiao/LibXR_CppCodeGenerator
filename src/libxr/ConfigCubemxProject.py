@@ -39,14 +39,15 @@ def get_current_branch(path):
     )
     return result.stdout.strip()
 
-def run_command(command):
+def run_command(command, ignore_error=False):
     result = subprocess.run(command, shell=True, capture_output=True, text=True)
     if result.returncode == 0:
         logging.info(f"[OK] {command}")
         return result.stdout
     else:
         logging.error(f"[FAILED] {command}\n{result.stderr}")
-        sys.exit(1)
+        if not ignore_error:
+            sys.exit(1)
 
 def find_ioc_file(directory):
     """Search for a .ioc file in the specified directory."""
@@ -67,17 +68,23 @@ def create_gitignore_file(project_dir):
 CMakeFiles/**
 """)
 
-def add_libxr(project_dir):
+def add_libxr(project_dir, libxr_commit=None):
     libxr_path = os.path.join(project_dir, "Middlewares", "Third_Party", "LibXR")
     midware_path = os.path.join(project_dir, "Middlewares")
     third_party_path = os.path.join(midware_path, "Third_Party")
+
+    try:
+        run_command(f"cd {project_dir} && git submodule update --init -- {libxr_path}", ignore_error=True)
+    except Exception:
+        pass
+
     if not os.path.exists(midware_path):
         logging.info("Creating Middleware folder...")
         os.makedirs(midware_path)
     if not os.path.exists(third_party_path):
         logging.info("Creating Third Party folder...")
         os.makedirs(third_party_path)
-    
+
     if not is_git_repo(project_dir):
         logging.warning(f"{project_dir} is not a Git repository. Initializing...")
         run_command(f"git init {project_dir}")
@@ -87,18 +94,19 @@ def add_libxr(project_dir):
         run_command(
             f"cd {project_dir} && git submodule add https://github.com/Jiu-Xiao/libxr.git ./Middlewares/Third_Party/LibXR"
         )
-        run_command(f"cd {project_dir} && git submodule update --init --recursive")
         logging.info("LibXR submodule added and initialized.")
     else:
         logging.info("LibXR submodule already exists.")
         if is_git_clean(libxr_path):
             logging.info("LibXR submodule is clean. Fetching latest changes...")
             branch = get_current_branch(libxr_path)
-            run_command(f"cd {libxr_path} && git fetch origin")
-            run_command(f"cd {libxr_path} && git checkout {branch}")
-            run_command(f"cd {libxr_path} && git pull origin {branch}")
-            run_command(f"cd {project_dir} && git submodule update --init --recursive")
+            run_command(f"cd {libxr_path} && git fetch origin", ignore_error=True)
+            run_command(f"cd {libxr_path} && git checkout {branch}", ignore_error=True)
+            run_command(f"cd {libxr_path} && git pull origin {branch}", ignore_error=True)
             logging.info("LibXR submodule updated to latest remote version.")
+            if libxr_commit:
+                logging.info(f"Checking out LibXR to locked commit {libxr_commit}")
+                run_command(f"cd {libxr_path} && git checkout {libxr_commit}")
         else:
             logging.warning("LibXR submodule has local changes. Skipping update.")
 
@@ -111,12 +119,12 @@ def create_user_directory(project_dir):
 
 def process_ioc_file(project_dir, yaml_output):
     """Parse the .ioc file and generate YAML configuration."""
-    print("Parsing .ioc file...")
+    logging.info("Parsing .ioc file...")
     run_command(f"xr_parse_ioc -d {project_dir} -o {yaml_output}")
 
 def generate_cpp_code(yaml_output, cpp_output, xrobot_enable=False):
     """Generate C++ code from YAML configuration, with optional XRobot support."""
-    print("Generating C++ code...")
+    logging.info("Generating C++ code...")
     cmd = f"xr_gen_code_stm32 -i {yaml_output} -o {cpp_output}"
     if xrobot_enable:
         cmd += " --xrobot"
@@ -124,7 +132,7 @@ def generate_cpp_code(yaml_output, cpp_output, xrobot_enable=False):
 
 def modify_stm32_interrupts(project_dir):
     """Modify STM32 interrupt handler files."""
-    print("Modifying STM32 interrupt files...")
+    logging.info("Modifying STM32 interrupt files...")
     run_command(f"xr_stm32_it {os.path.join(project_dir, 'Core/Src')}")
 
 def generate_cmake_file(project_dir, clang_enable):
@@ -134,17 +142,16 @@ def generate_cmake_file(project_dir, clang_enable):
         run_command(f"xr_stm32_clang {project_dir}")
 
 def main():
-    try:
-        pkg_version = version("libxr")
-        print(f"libxr {pkg_version}")
-    except PackageNotFoundError:
-        print("libxr (version unknown)")
+    from libxr.PackageInfo import LibXRPackageInfo
+
+    LibXRPackageInfo.check_and_print()
 
     parser = argparse.ArgumentParser(description="Automate STM32CubeMX project setup")
     parser.add_argument("-d", "--directory", required=True, help="STM32CubeMX project directory")
     parser.add_argument("-t", "--terminal", default="", help="Optional terminal device source")
     parser.add_argument("-c", "--clang", action="store_true", help="Enable Clang")
     parser.add_argument("--xrobot", action="store_true", help="Support XRobot")
+    parser.add_argument("--commit", default="", help="Specify locked LibXR commit hash")
 
     args = parser.parse_args()
 
@@ -153,20 +160,33 @@ def main():
     clang_enable = bool(args.clang)
     xrobot_enable = bool(args.xrobot)
 
+    libxr_commit = args.commit.strip()
+    if not libxr_commit:
+        try:
+            sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "src")))
+            from libxr.libxr_version import LibXRInfo
+            libxr_commit = LibXRInfo.COMMIT
+        except Exception as e:
+            logging.info(f"No lock commit found in src/libxr/libxr_version.py: {e}")
+            libxr_commit = ""
+
+    if(libxr_commit):
+        logging.info(f"Locked LibXR commit: {libxr_commit}")
+
     if not os.path.isdir(project_dir):
-        print(f"[Error] Directory {project_dir} does not exist")
+        logging.error(f"Directory {project_dir} does not exist")
         exit(1)
 
     # Add Git submodule if necessary
-    add_libxr(project_dir)
+    add_libxr(project_dir, libxr_commit if libxr_commit else None)
 
     # Find .ioc file
     ioc_file = find_ioc_file(project_dir)
     if not ioc_file:
-        print("[Error] No .ioc file found")
+        logging.error("No .ioc file found")
         exit(1)
 
-    print(f"Found .ioc file: {ioc_file}")
+    logging.info(f"Found .ioc file: {ioc_file}")
 
     # Create user directory
     user_path = create_user_directory(project_dir)
@@ -189,7 +209,7 @@ def main():
 
     # Handle optional terminal source
     if terminal_source:
-        print("Modifying terminal device source...")
+        logging.info("Modifying terminal device source...")
 
     logging.info("[Pass] All tasks completed successfully!")
 

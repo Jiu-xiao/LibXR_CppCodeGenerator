@@ -123,6 +123,10 @@ extern void STM32_USB_ISR_Handler_F1(void);
 
 
 def main():
+    from libxr.PackageInfo import LibXRPackageInfo
+
+    LibXRPackageInfo.check_and_print()
+
     parser = argparse.ArgumentParser(
         description="Modify STM32 interrupt handler files."
     )
