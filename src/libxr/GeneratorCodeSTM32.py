@@ -72,6 +72,8 @@ def parse_arguments():
                         help="Output C++ file path")
     parser.add_argument("--xrobot", action="store_true",
                         help="Enable XRobot framework integration")
+    parser.add_argument("--hw-cntr", action="store_true",
+                        help="Generate LibXR HardwareContainer definition")
     parser.add_argument("--libxr-config", default="",
                         help="Optional path or URL to libxr_config.yaml")
     return parser.parse_args()
@@ -117,13 +119,13 @@ def generate_peripheral_instances(project_data: dict) -> str:
 # --------------------------
 # Configuration Loading
 # --------------------------
-def load_configuration(file_path: str, use_xrobot: bool) -> dict:
+def load_configuration(file_path: str, use_hw_cntr: bool) -> dict:
     """Load and validate project YAML configuration with enhanced error reporting."""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
 
-            if use_xrobot:
+            if use_hw_cntr:
                 if 'device_aliases' in config:
                     new_aliases = {}
                     for dev, entry in config['device_aliases'].items():
@@ -577,7 +579,7 @@ class PeripheralFactory:
         return "main", code
 
 
-def _generate_header_includes(use_xrobot: bool = False) -> str:
+def _generate_header_includes(use_xrobot: bool = False, use_hw_cntr: bool = False) -> str:
     """Generate essential header inclusions with optional XRobot components."""
     headers = [
         '#include "app_main.h"\n',
@@ -599,11 +601,10 @@ def _generate_header_includes(use_xrobot: bool = False) -> str:
         '#include "flash_map.hpp"'
     ]
 
+    if use_hw_cntr:
+        headers.append('#include "app_framework.hpp"')
     if use_xrobot:
-        headers.extend([
-            '#include "app_framework.hpp"\n'
-            '#include "xrobot_main.hpp"\n'
-        ])
+        headers.append('#include "xrobot_main.hpp"')
 
     return '\n'.join(headers) + '\n\nusing namespace LibXR;\n'
 
@@ -890,10 +891,10 @@ def generate_xrobot_hardware_container() -> str:
 # --------------------------
 # Main Generator
 # --------------------------
-def generate_full_code(project_data: dict, use_xrobot: bool, existing_code: str) -> str:
+def generate_full_code(project_data: dict, use_xrobot: bool, use_hw_cntr: bool, existing_code: str) -> str:
     user_code_def_3 = '  XRobotMain(peripherals);\n' if use_xrobot else f"  while(true) {{\n    Thread::Sleep(UINT32_MAX);\n  }}\n"
     components = [
-        _generate_header_includes(use_xrobot),
+        _generate_header_includes(use_xrobot, use_hw_cntr),
         '/* User Code Begin 1 */',
         preserve_user_blocks(existing_code, 1),
         '/* User Code End 1 */',
@@ -910,7 +911,7 @@ def generate_full_code(project_data: dict, use_xrobot: bool, existing_code: str)
         generate_peripheral_instances(project_data),
         configure_terminal(project_data),
         configure_watchdog(project_data),
-        generate_xrobot_hardware_container() if use_xrobot else '',
+        generate_xrobot_hardware_container() if use_hw_cntr else '',
         '  /* User Code Begin 3 */',
         user_code_def_3 if preserve_user_blocks(existing_code, 3) == '' else '',
         preserve_user_blocks(existing_code, 3),
@@ -1011,12 +1012,18 @@ def main():
     LibXRPackageInfo.check_and_print()
 
     try:
+        # Parse arguments
         args = parse_arguments()
 
+        use_xrobot = args.xrobot
+        use_hw_cntr = args.hw_cntr
+        if use_xrobot:
+            use_hw_cntr = True
+
         # Load configurations
-        project_data = load_configuration(args.input, args.xrobot)
+        project_data = load_configuration(args.input, use_hw_cntr)
         load_libxr_config(os.path.dirname(args.output), args.libxr_config)
-        initialize_device_aliases(args.xrobot)
+        initialize_device_aliases(use_hw_cntr)
 
         output_dir = os.path.dirname(args.output)
         os.makedirs(output_dir, exist_ok=True)
@@ -1027,7 +1034,7 @@ def main():
             with open(args.output, "r", encoding="utf-8") as f:
                 existing_code = f.read()
 
-        output_code = generate_full_code(project_data, args.xrobot, existing_code)
+        output_code = generate_full_code(project_data, use_xrobot, use_hw_cntr, existing_code)
 
         # Write output
         with open(args.output, "w", encoding="utf-8") as f:

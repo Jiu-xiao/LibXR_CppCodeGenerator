@@ -67,6 +67,17 @@ endif()
 
 include_cmake_cmd = "include(${CMAKE_CURRENT_LIST_DIR}/cmake/LibXR.CMake)\n"
 
+def clean_cmake_build_dirs(input_directory):
+    removed = False
+    for d in os.listdir(input_directory):
+        full_path = os.path.join(input_directory, d)
+        if os.path.isdir(full_path) and (d == "build" or d.startswith("cmake-build")):
+            logging.info(f"Removing build directory: {full_path}")
+            shutil.rmtree(full_path)
+            removed = True
+    if not removed:
+        logging.info("No build or cmake-build* directory found, nothing to clean.")
+
 def main():
     from libxr.PackageInfo import LibXRPackageInfo
 
@@ -82,11 +93,7 @@ def main():
         logging.error("Input directory does not exist.")
         exit(1)
 
-    build_path = os.path.join(input_directory, "build")
-    if os.path.exists(build_path) and os.path.isdir(build_path):
-        logging.info("Removing existing 'build' directory...")
-        shutil.rmtree(build_path)
-        logging.info("'build' directory removed.")
+    clean_cmake_build_dirs(input_directory)
 
     file_path = os.path.join(input_directory, "cmake", "LibXR.CMake")
 
