@@ -5,6 +5,7 @@ import sys
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
+
 def find_toolchain_file(directory):
     """
     Searches for gcc-arm-none-eabi.cmake in the specified directory.
@@ -13,9 +14,7 @@ def find_toolchain_file(directory):
     """
     if not os.path.isdir(directory):
         logging.error(
-            f"The specified directory '{directory}' does not exist or is invalid.",
-            file=sys.stderr,
-        )
+            f"The specified directory '{directory}' does not exist or is invalid.")
         return None
 
     target_filename = "gcc-arm-none-eabi.cmake"
@@ -55,10 +54,10 @@ def parse_cmake_file(file_path):
                     )
 
     except FileNotFoundError:
-        logging.error(f"CMake file '{file_path}' not found.", file=sys.stderr)
+        logging.error(f"CMake file '{file_path}' not found.")
         sys.exit(1)
     except Exception as e:
-        logging.error(f"Failed to parse the CMake file - {e}", file=sys.stderr)
+        logging.error(f"Failed to parse the CMake file - {e}")
         sys.exit(1)
 
     return data
@@ -204,6 +203,11 @@ def main():
 
     LibXRPackageInfo.check_and_print()
 
+    logging.warning(
+        "This tool is deprecated since STM32CubeMX 15.0. Native Clang support is provided by CubeMX. "
+        "You probably do NOT need to run this script."
+    )
+
     parser = argparse.ArgumentParser(
         description="Parse the CMake configuration file and extract key data. Overwrites the original file by default."
     )
@@ -223,10 +227,14 @@ def main():
     toolchain_file = find_toolchain_file(args.input_dir)
     if not toolchain_file:
         logging.error(
-            f"Could not find 'gcc-arm-none-eabi.cmake' in '{args.input_dir}/cmake'.",
-            file=sys.stderr,
+            f"Could not find 'gcc-arm-none-eabi.cmake' in '{args.input_dir}/cmake'."
         )
         sys.exit(1)
+
+    starm_clang_cmake = os.path.join(args.input_dir, "cmake", "starm-clang.cmake")
+    if os.path.exists(starm_clang_cmake):
+        logging.info("Detected 'starm-clang.cmake' (CubeMX 15.0+). No action needed.")
+        sys.exit(0)
 
     cmake_file_path = os.path.join(os.path.abspath(args.input_dir), "CMakeLists.txt")
 
@@ -252,8 +260,7 @@ def main():
     linker_script_path = os.path.join(args.input_dir, data["linker_script"])
     if not os.path.exists(linker_script_path):
         logging.error(
-            f"Linker script '{data['linker_script']}' not found.",
-            file=sys.stderr,
+            f"Linker script '{data['linker_script']}' not found."
         )
         sys.exit(-1)
 
@@ -276,7 +283,7 @@ def main():
             cmake_file_lines = out_file.readlines()
     except Exception as e:
         logging.error(
-            f"Failed to write to file '{cmake_file_path}' - {e}", file=sys.stderr
+            f"Failed to write to file '{cmake_file_path}' - {e}"
         )
         sys.exit(1)
 

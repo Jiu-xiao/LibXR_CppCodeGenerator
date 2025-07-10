@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 
-import argparse
+import logging
 import os
 import subprocess
-import logging
 import sys
-from importlib.metadata import version, PackageNotFoundError
+
+import argparse
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+
 
 def is_git_repo(path):
     try:
@@ -21,6 +22,7 @@ def is_git_repo(path):
     except subprocess.CalledProcessError:
         return False
 
+
 def is_git_clean(path):
     """Check if the Git repo at `path` has no uncommitted changes."""
     result = subprocess.run(
@@ -30,6 +32,7 @@ def is_git_clean(path):
     )
     return result.returncode == 0 and result.stdout.strip() == ""
 
+
 def get_current_branch(path):
     """Get the current branch name of a Git repo at `path`."""
     result = subprocess.run(
@@ -38,6 +41,7 @@ def get_current_branch(path):
         text=True
     )
     return result.stdout.strip()
+
 
 def run_command(command, ignore_error=False):
     result = subprocess.run(command, shell=True, capture_output=True, text=True)
@@ -49,12 +53,14 @@ def run_command(command, ignore_error=False):
         if not ignore_error:
             sys.exit(1)
 
+
 def find_ioc_file(directory):
     """Search for a .ioc file in the specified directory."""
     for file in os.listdir(directory):
         if file.endswith(".ioc"):
             return os.path.join(directory, file)
     return None
+
 
 def create_gitignore_file(project_dir):
     gitignore_path = os.path.join(project_dir, ".gitignore")
@@ -67,6 +73,7 @@ def create_gitignore_file(project_dir):
 .config.yaml
 CMakeFiles/**
 """)
+
 
 def add_libxr(project_dir, libxr_commit=None):
     libxr_path = os.path.join(project_dir, "Middlewares", "Third_Party", "LibXR")
@@ -110,6 +117,7 @@ def add_libxr(project_dir, libxr_commit=None):
         else:
             logging.warning("LibXR submodule has local changes. Skipping update.")
 
+
 def create_user_directory(project_dir):
     """Ensure the User directory exists."""
     user_path = os.path.join(project_dir, "User")
@@ -117,10 +125,12 @@ def create_user_directory(project_dir):
         os.makedirs(user_path)
     return user_path
 
+
 def process_ioc_file(project_dir, yaml_output):
     """Parse the .ioc file and generate YAML configuration."""
     logging.info("Parsing .ioc file...")
     run_command(f"xr_parse_ioc -d {project_dir} -o {yaml_output}")
+
 
 def generate_cpp_code(yaml_output, cpp_output, xrobot_enable=False):
     """Generate C++ code from YAML configuration, with optional XRobot support."""
@@ -130,16 +140,19 @@ def generate_cpp_code(yaml_output, cpp_output, xrobot_enable=False):
         cmd += " --xrobot"
     run_command(cmd)
 
+
 def modify_stm32_interrupts(project_dir):
     """Modify STM32 interrupt handler files."""
     logging.info("Modifying STM32 interrupt files...")
     run_command(f"xr_stm32_it {os.path.join(project_dir, 'Core/Src')}")
+
 
 def generate_cmake_file(project_dir, clang_enable):
     """Generate CMakeLists.txt for STM32 project with selected compiler."""
     run_command(f"xr_stm32_cmake {project_dir}")
     if clang_enable:
         run_command(f"xr_stm32_clang {project_dir}")
+
 
 def main():
     from libxr.PackageInfo import LibXRPackageInfo
@@ -149,7 +162,7 @@ def main():
     parser = argparse.ArgumentParser(description="Automate STM32CubeMX project setup")
     parser.add_argument("-d", "--directory", required=True, help="STM32CubeMX project directory")
     parser.add_argument("-t", "--terminal", default="", help="Optional terminal device source")
-    parser.add_argument("-c", "--clang", action="store_true", help="Enable Clang")
+    parser.add_argument("-c", "--clang", action="store_true", help="Enable Clang build support. (DEPRECATED since STM32CubeMX 15.0, now native!)")
     parser.add_argument("--xrobot", action="store_true", help="Support XRobot")
     parser.add_argument("--commit", default="", help="Specify locked LibXR commit hash")
 
@@ -159,6 +172,15 @@ def main():
     terminal_source = args.terminal
     clang_enable = bool(args.clang)
     xrobot_enable = bool(args.xrobot)
+
+    if clang_enable:
+        logging.warning(
+            "The '-c/--clang' option is deprecated since STM32CubeMX 15.0. Native Clang support is now provided by "
+            "CubeMX and this option has no effect.")
+        starm_clang_cmake = os.path.join(project_dir, "cmake", "starm-clang.cmake")
+        if os.path.exists(starm_clang_cmake):
+            logging.error("Detected 'starm-clang.cmake' (CubeMX 15.0+). No clang codegen needed.")
+            sys.exit(-1)
 
     libxr_commit = args.commit.strip()
     if not libxr_commit:
@@ -170,7 +192,7 @@ def main():
             logging.info(f"No lock commit found in src/libxr/libxr_version.py: {e}")
             libxr_commit = ""
 
-    if(libxr_commit):
+    if (libxr_commit):
         logging.info(f"Locked LibXR commit: {libxr_commit}")
 
     if not os.path.isdir(project_dir):
@@ -212,6 +234,7 @@ def main():
         logging.info("Modifying terminal device source...")
 
     logging.info("[Pass] All tasks completed successfully!")
+
 
 if __name__ == "__main__":
     main()
