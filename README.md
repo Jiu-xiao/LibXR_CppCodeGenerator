@@ -100,7 +100,7 @@ Generates platform-agnostic C++ hardware abstraction code from YAML.
 Automatically configures an STM32CubeMX project.
 
 ```bash
-usage: xr_cubemx_cfg [-h] -d DIRECTORY [-t TERMINAL] [-c] [--xrobot]
+usage: xr_cubemx_cfg [-h] -d DIRECTORY [-t TERMINAL] [--xrobot]
 ```
 
 解析 `.ioc` 文件，生成 YAML 和 C++ 驱动代码，补丁中断处理函数，并初始化项目结构  
@@ -122,8 +122,8 @@ Parses `.ioc`, generates YAML and C++ code, patches interrupt handlers, and init
 
 - `-c, --clang`：
 
-  启用 Clang 构建支持  
-  Enable Clang build support.
+  启用 Clang 构建支持 (此选项已经弃用) 
+  Enable Clang build support. (This option has been deprecated) 
 
 - `--xrobot`：
 
@@ -354,6 +354,12 @@ Creates Clang-compatible toolchain file.
 ```bash
 usage: xr_stm32_clang [-h] input_dir
 ```
+
+#### 工具已弃用 / Deprecated Notice
+
+自 STM32CubeMX 15.0 起，官方已原生支持 Clang 工具链，并会自动生成 starm-clang.cmake 文件。
+
+Since STM32CubeMX 15.0, native Clang support is provided and starm-clang.cmake will be generated automatically.
 
 #### 🔧 必选参数 (Required)
 
