@@ -198,7 +198,7 @@ Parses `.ioc` files and creates `.config.yaml` with a readable summary.
 Generates STM32 application code from YAML.
 
 ```bash
-usage: xr_gen_code_stm32 [-h] -i INPUT -o OUTPUT [--xrobot] [--libxr-config LIBXR_CONFIG]
+usage: xr_gen_code_stm32 [-h] -i INPUT -o OUTPUT [--xrobot] [--hw-cntr] [--libxr-config LIBXR_CONFIG]
 ```
 
 #### 🔧 Required
@@ -219,6 +219,10 @@ usage: xr_gen_code_stm32 [-h] -i INPUT -o OUTPUT [--xrobot] [--libxr-config LIBX
 
   启用 XRobot glue 代码生成  
   Enable XRobot glue generation
+
+- `--hw-cntr`  
+  生成 LibXR HardwareContainer 定义及 app_framework.hpp 头文件（可用于非 XRobot 项目）  
+  Generate LibXR HardwareContainer definition and include app_framework.hpp header (can be used without XRobot)
 
 - `--libxr-config`：
 
