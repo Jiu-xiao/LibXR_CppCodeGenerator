@@ -127,6 +127,39 @@ jobs:
           name: python-package-${{ matrix.os }}-${{ matrix.arch }}-py${{ matrix.python-version }}
           path: dist/*
 
+      - name: Install built package (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          pip install dist/*.whl || pip install dist/*.tar.gz
+
+      - name: Install built package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pkg = Get-ChildItem dist\*.whl,dist\*.tar.gz | Select-Object -First 1
+          if ($pkg) {
+            pip install $pkg.FullName
+          }
+
+      - name: Checkout BSP Compatibility Test Repo
+        uses: actions/checkout@v4
+        with:
+          repository: xrobot-org/bsp_stm32f103c8
+          path: bsp_test
+
+      - name: Python Compatibility Check (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          cd bsp_test
+          xr_cubemx_cfg -d .
+
+      - name: Python Compatibility Check (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-Location bsp_test
+          xr_cubemx_cfg -d .
+
   publish:
     name: Publish to PyPI
     runs-on: ubuntu-latest
