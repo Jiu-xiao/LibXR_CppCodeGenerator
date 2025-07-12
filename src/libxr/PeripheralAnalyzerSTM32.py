@@ -15,6 +15,7 @@ from typing import (
     Any,
     TextIO,
     Match,
+    Tuple
 )
 from collections import defaultdict
 import yaml
@@ -269,7 +270,7 @@ class TIMParser(PeripheralParser):
             "DutyCycle": sanitize_numeric(value) if value.isdigit() else None,
         }
 
-    def _get_associated_pin_label(self, timer_pin: str) -> tuple[str, bool]:
+    def _get_associated_pin_label(self, timer_pin: str) -> Tuple[str, bool]:
         """
         Retrieve GPIO label and whether it's a complementary (N) output.
         Return: (label, is_complementary)

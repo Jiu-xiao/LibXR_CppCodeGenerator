@@ -14,7 +14,7 @@ def is_stm32_project(path: str) -> bool:
     try:
         return any(f.endswith(".ioc") for f in os.listdir(path))
     except Exception as e:
-        logging(f"Cannot check directory '{path}': {e}")
+        logging.error(f"Cannot check directory '{path}': {e}")
         return False
 
 

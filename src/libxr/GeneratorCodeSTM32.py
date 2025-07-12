@@ -631,9 +631,9 @@ def _generate_extern_declarations(project_data: dict) -> str:
             if p_type == 'USB':
                 usb_info = _detect_usb_device(project_data)
                 if usb_info is not None and libxr_settings.get("SYSTEM", "None") != 'ThreadX':
-                    externs.add(f'extern USBD_HandleTypeDef {usb_info['handler']};')
-                    externs.add(f'extern uint8_t UserTxBuffer{usb_info['speed']}[APP_TX_DATA_SIZE];')
-                    externs.add(f'extern uint8_t UserRxBuffer{usb_info['speed']}[APP_RX_DATA_SIZE];')
+                    externs.add(f"extern USBD_HandleTypeDef {usb_info['handler']};")
+                    externs.add(f"extern uint8_t UserTxBuffer{usb_info['speed']}[APP_TX_DATA_SIZE];")
+                    externs.add(f"extern uint8_t UserRxBuffer{usb_info['speed']}[APP_RX_DATA_SIZE];")
             elif p_type == 'DAC':
                 externs.add(f'extern DAC_HandleTypeDef h{instance.lower()};')
             else:
@@ -885,7 +885,8 @@ def generate_xrobot_hardware_container() -> str:
             alias_str = ", ".join(f'"{alias}"' for alias in aliases)
             entry_list.append(f"  LibXR::Entry<LibXR::{dev_type}>({{{dev}, {{{alias_str}}}}})")  # With aliases
 
-    return f"""\n  LibXR::HardwareContainer peripherals{{\n  {",\n  ".join(entry_list)}\n  }};\n"""
+    entry_body = ",\n  ".join(entry_list)
+    return f"\n  LibXR::HardwareContainer peripherals{{\n  {entry_body}\n  }};\n"   # 只变量进f-string
 
 
 # --------------------------
