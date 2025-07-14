@@ -37,7 +37,7 @@ jobs:
     - name: Compiler Version Check
       run: |
         arm-none-eabi-gcc --version
-        clang --version
+        starm-clang --version
 
     - name: Get Test Project
       uses: actions/checkout@v4
