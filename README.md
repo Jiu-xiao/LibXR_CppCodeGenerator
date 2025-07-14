@@ -120,11 +120,6 @@ Parses `.ioc`, generates YAML and C++ code, patches interrupt handlers, and init
   串口设备名称(如 `usart1` `usb`)  
   Terminal device name (e.g. `usart1` `usb`).
 
-- `-c, --clang`：
-
-  启用 Clang 构建支持 (此选项已经弃用) 
-  Enable Clang build support. (This option has been deprecated) 
-
 - `--xrobot`：
 
   生成 XRobot Glue 代码  
@@ -346,56 +341,6 @@ usage: xr_stm32_it [-h] input_dir
 
 ---
 
-### `xr_stm32_clang`
-
-自动修改 STM32 工程，适配 Clang 编译工具链。  
-Creates Clang-compatible toolchain file.
-
-```bash
-usage: xr_stm32_clang [-h] input_dir
-```
-
-#### 工具已弃用 / Deprecated Notice
-
-自 STM32CubeMX 15.0 起，官方已原生支持 Clang 工具链，并会自动生成 starm-clang.cmake 文件。
-
-Since STM32CubeMX 15.0, native Clang support is provided and starm-clang.cmake will be generated automatically.
-
-#### 🔧 必选参数 (Required)
-
-- `input_dir`：
-
-  包含 `gcc-arm-none-eabi.cmake` 的 STM32 工程目录路径  
-  Directory containing `gcc-arm-none-eabi.cmake` for the STM32 project
-
-#### ⚙️ 功能说明 (Functionality)
-
-- 在 `{input_dir}/cmake/` 中查找 `gcc-arm-none-eabi.cmake` 文件  
-  Locate `gcc-arm-none-eabi.cmake` inside `{input_dir}/cmake/`
-
-- 解析其中的 `linker_script` 路径与 `-mcpu` 编译器参数  
-  Extract `linker_script` path and `-mcpu` target flag
-
-- 自动生成 `gcc-arm-none-eabi.cmake` 文件，适配 Clang 编译工具链  
-  Generate Clang-compatible `gcc-arm-none-eabi.cmake` toolchain file
-
-- 自动修改 `CMakeLists.txt` 文件，插入  
-  Automatically modify `CMakeLists.txt` to include:
-  
-  ```cmake
-  include("cmake/gcc-arm-none-eabi.cmake")
-  ```
-
-#### 📦 输出内容 (Outputs)
-
-- 覆盖原有 `gcc-arm-none-eabi.cmake` 文件  
-  Overwrites original `gcc-arm-none-eabi.cmake` file
-
-- 自动添加或更新 `CMakeLists.txt` 文件中的 include 指令  
-  Auto-updates `CMakeLists.txt` to include the toolchain file
-
----
-
 ### `xr_libxr_cmake`
 
 为 STM32CubeMX 工程生成 `LibXR.CMake` 配置，并自动集成至 `CMakeLists.txt`。  
@@ -496,6 +441,58 @@ usage: xr_libxr_cmake [-h] input_dir
     Strongly recommended to use `TIM6`/`TIM7` Timers as Timebase  
 > ✅ 并将该中断优先级设置为 **最高(0)**  
     And set the interrupt priority to **highest (0)**
+
+---
+
+### `xr_stm32_toolchain_switch`
+
+自动切换 STM32 CMake 工程的工具链及 Clang 标准库配置。  
+Automatically switches STM32 CMake toolchain and Clang standard library configuration.
+
+```bash
+usage: xr_stm32_toolchain_switch {gcc,clang} [-g | --gnu | --hybrid | -n | --newlib | -p | --picolibc]
+```
+
+#### 🔧 必选参数 (Required)
+
+- `gcc`  
+  切换为 GCC ARM 工具链  
+  Switch to GCC ARM toolchain
+
+- `clang`  
+  切换为 Clang 工具链（需额外指定标准库）  
+  Switch to Clang toolchain (requires a standard library selection below)
+
+#### ⚙️ 可选参数 (Standard library for `clang` only)
+
+- `-g, --gnu, --hybrid`  
+  使用 GNU 标准库  
+  Use GNU standard library
+
+- `-n, --newlib`  
+  使用 newlib 标准库  
+  Use newlib standard library
+
+- `-p, --picolibc`  
+  使用 picolibc 标准库  
+  Use picolibc standard library
+
+#### 📝 示例 (Examples)
+
+```bash
+xr_stm32_toolchain_switch gcc
+xr_stm32_toolchain_switch clang -g
+xr_stm32_toolchain_switch clang --newlib
+xr_stm32_toolchain_switch clang --picolibc
+```
+
+#### 📦 功能说明 (Functionality)
+
+- 自动修改 `CMakePresets.json`，切换默认工具链  
+  Automatically modify `CMakePresets.json` to switch the default toolchain
+
+- 如为 Clang，同步修改 `cmake/starm-clang.cmake` 的标准库类型  
+  If Clang, synchronize the standard library type in `cmake/starm-clang.cmake`
 
 ---
 

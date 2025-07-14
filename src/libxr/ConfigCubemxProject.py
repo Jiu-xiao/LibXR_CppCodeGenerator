@@ -147,11 +147,9 @@ def modify_stm32_interrupts(project_dir):
     run_command(f"xr_stm32_it {os.path.join(project_dir, 'Core/Src')}")
 
 
-def generate_cmake_file(project_dir, clang_enable):
+def generate_cmake_file(project_dir):
     """Generate CMakeLists.txt for STM32 project with selected compiler."""
     run_command(f"xr_stm32_cmake {project_dir}")
-    if clang_enable:
-        run_command(f"xr_stm32_clang {project_dir}")
 
 
 def main():
@@ -162,7 +160,6 @@ def main():
     parser = argparse.ArgumentParser(description="Automate STM32CubeMX project setup")
     parser.add_argument("-d", "--directory", required=True, help="STM32CubeMX project directory")
     parser.add_argument("-t", "--terminal", default="", help="Optional terminal device source")
-    parser.add_argument("-c", "--clang", action="store_true", help="Enable Clang build support. (DEPRECATED since STM32CubeMX 15.0, now native!)")
     parser.add_argument("--xrobot", action="store_true", help="Support XRobot")
     parser.add_argument("--commit", default="", help="Specify locked LibXR commit hash")
 
@@ -170,17 +167,7 @@ def main():
 
     project_dir = args.directory.rstrip("/")
     terminal_source = args.terminal
-    clang_enable = bool(args.clang)
     xrobot_enable = bool(args.xrobot)
-
-    if clang_enable:
-        logging.warning(
-            "The '-c/--clang' option is deprecated since STM32CubeMX 15.0. Native Clang support is now provided by "
-            "CubeMX and this option has no effect.")
-        starm_clang_cmake = os.path.join(project_dir, "cmake", "starm-clang.cmake")
-        if os.path.exists(starm_clang_cmake):
-            logging.error("Detected 'starm-clang.cmake' (CubeMX 15.0+). No clang codegen needed.")
-            sys.exit(-1)
 
     libxr_commit = args.commit.strip()
     if not libxr_commit:
@@ -227,7 +214,7 @@ def main():
     modify_stm32_interrupts(project_dir)
 
     # Generate CMakeLists.txt with selected compiler
-    generate_cmake_file(project_dir, clang_enable)
+    generate_cmake_file(project_dir)
 
     # Handle optional terminal source
     if terminal_source:
