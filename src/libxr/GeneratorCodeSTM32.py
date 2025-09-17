@@ -403,6 +403,57 @@ def generate_dma_resources(project_data: dict) -> str:
                     dma_code.append(
                         f"static uint8_t {instance_lower}_buf[{buf_size}]{sec_str};"
                     )
+        elif p_type_base == "USB":
+            # Generate buffer variables for each USB EP (controlled by dma_section)
+            for instance, cfg in instances.items():
+                # Normalize instance name
+                inst_u = (instance or "USB_FS").upper()
+                inst_u = (inst_u
+                          .replace("USBOTG", "USB_OTG_")
+                          .replace("OTGFS", "OTG_FS")
+                          .replace("OTGHS", "OTG_HS"))
+                if inst_u == "USB":
+                    inst_u = "USB_FS"
+                is_otg = inst_u.startswith("USB_OTG_")
+                inst_lower = inst_u.lower()
+
+                # Read or set default USB config from libxr_settings (consistent with _generate_usb)
+                usb_cfg = libxr_settings.setdefault("USB", {}).setdefault(inst_lower, {})
+
+                def _as_int(v, d):
+                    try:
+                        return int(str(v), 0)
+                    except Exception:
+                        return d
+
+                enable = usb_cfg.setdefault("enable", cfg.get("enable", False))
+                if not enable:
+                    logging.info(f"Skipping disabled USB instance: {instance}")
+                    continue
+
+                # EP0 packet size, fallback to defaults if needed
+                ep0 = _as_int(usb_cfg.get("ep0_packet_size", cfg.get("ep0_packet_size", cfg.get("packet_size", 8))), 8)
+                if ep0 not in (8, 16, 32, 64):
+                    ep0 = 8
+                usb_cfg.setdefault("ep0_packet_size", ep0)
+
+                tx_sz = usb_cfg.setdefault("tx_buffer_size", _as_int(cfg.get("tx_buffer_size", 128), 128))
+                rx_sz = usb_cfg.setdefault("rx_buffer_size", _as_int(cfg.get("rx_buffer_size", 128), 128))
+                usb_cfg.setdefault("rx_fifo_size", _as_int(cfg.get("rx_fifo_size", 256 if is_otg else 128), 256 if is_otg else 128))
+                usb_cfg.setdefault("tx_fifo_size", _as_int(cfg.get("tx_fifo_size", 128), 128))
+
+                # Section name (same as UART)
+                dma_section = usb_cfg.get("dma_section", cfg.get("dma_section", ""))
+                if "dma_section" not in usb_cfg:
+                    usb_cfg["dma_section"] = dma_section
+                sec_str = f' __attribute__((section("{dma_section}")))' if dma_section else ""
+
+                # One line per variable to avoid attribute only on the last one
+                dma_code.append(f"static uint8_t {inst_lower}_ep0_in_buf[{ep0}]{sec_str};")
+                dma_code.append(f"static uint8_t {inst_lower}_ep0_out_buf[{ep0}]{sec_str};")
+                dma_code.append(f"static uint8_t {inst_lower}_ep1_in_buf[{tx_sz}]{sec_str};")
+                dma_code.append(f"static uint8_t {inst_lower}_ep1_out_buf[{rx_sz}]{sec_str};")
+                dma_code.append(f"static uint8_t {inst_lower}_ep2_in_buf[8]{sec_str};")
 
     # Final output with section header if any code generated
     if dma_code:
@@ -431,6 +482,7 @@ class PeripheralFactory:
             "LPUART": PeripheralFactory._generate_uart,
             "I2C": PeripheralFactory._generate_i2c,
             "IWDG": PeripheralFactory._generate_iwdg,
+            "USB": PeripheralFactory._generate_usb,
         }
         generator = handler_map.get(p_type.upper())
         return generator(instance, config) if generator else ("", "")
@@ -443,10 +495,8 @@ class PeripheralFactory:
         adc_config = libxr_settings['ADC'].setdefault(instance.lower(), {})
         vref = adc_config.setdefault('vref', 3.3)
 
-        channels = f"  std::array<uint32_t, {len(conversions)}> {instance.lower()}_channels = {{{', '.join(conversions)}}};\n"
-        code = f"  STM32ADC {instance.lower()}(&h{instance.lower()}, {instance.lower()}_buf, &{instance.lower()}_channels[0], {len(conversions)}, {vref});\n"
+        channels_code = f"  STM32ADC {instance.lower()}(&h{instance.lower()}, {instance.lower()}_buf, {{{', '.join(conversions)}}}, {vref});\n"
 
-        channels_code = channels + code
         index = 0
 
         for channel in conversions:
@@ -578,17 +628,160 @@ class PeripheralFactory:
         _register_device(instance.lower(), "Watchdog")
         return "main", code
 
+    @staticmethod
+    def _generate_usb(instance: str, config: dict) -> tuple:
+        """
+        Simple version:
+        - Only writes/updates the final value of libxr_settings['USB'][instance_lower]
+        - Only generates device construction code (references *_buf), does not create any buffer arrays
+        """
+        cfg_in = config or {}
+
+        # Normalize instance name (consistent with extern declarations)
+        inst_u = (instance or "USB_FS").upper()
+        inst_u = (inst_u
+                .replace("USBOTG", "USB_OTG_")
+                .replace("OTGFS", "OTG_FS")
+                .replace("OTGHS", "OTG_HS"))
+        if inst_u == "USB":
+            inst_u = "USB_FS"
+        if inst_u not in {"USB_FS", "USB_HS", "USB_OTG_FS", "USB_OTG_HS"}:
+            inst_u = "USB_FS"
+
+        is_otg = inst_u.startswith("USB_OTG_")
+        speed = "HS" if inst_u.endswith("_HS") else "FS"
+        inst_lower = inst_u.lower()      # Example: usb_fs / usb_otg_fs
+        obj = f"usb_{speed.lower()}"     # Example: usb_fs / usb_hs
+
+        # Update settings (consistent with other modules)
+        usb_root = libxr_settings.setdefault("USB", {})
+        inst_cfg = usb_root.setdefault(inst_lower, {})
+
+        def _as_int(v, d):
+            try:
+                return int(str(v), 0)  # Support 0x (hex) style
+            except Exception:
+                return d
+
+        # Enable switch
+        inst_cfg.setdefault("enable", cfg_in.get("enable", False))
+        if not inst_cfg["enable"]:
+            logging.info(f"USB instance '{inst_lower}' is disabled. Skipping generation.")
+            return "", ""
+
+        # Packet size and FIFO setup
+        ep0 = _as_int(cfg_in.get("ep0_packet_size", cfg_in.get("packet_size", inst_cfg.get("ep0_packet_size", 8))), 8)
+        if ep0 not in (8, 16, 32, 64):
+            ep0 = 8
+        inst_cfg.setdefault("ep0_packet_size", ep0)
+
+        # DMA buffer sizes
+        inst_cfg.setdefault("tx_buffer_size", _as_int(cfg_in.get("tx_buffer_size", inst_cfg.get("tx_buffer_size", 128)), 128))
+        inst_cfg.setdefault("rx_buffer_size", _as_int(cfg_in.get("rx_buffer_size", inst_cfg.get("rx_buffer_size", 128)), 128))
+        
+        # USB HW FIFO sizes
+        inst_cfg.setdefault("tx_fifo_size", _as_int(cfg_in.get("tx_fifo_size", inst_cfg.get("tx_fifo_size", 128)), 128))
+        inst_cfg.setdefault("rx_fifo_size", _as_int(cfg_in.get("rx_fifo_size", inst_cfg.get("rx_fifo_size", 256 if is_otg else 128)), 256 if is_otg else 128))
+        # CDC FIFO
+        inst_cfg.setdefault("cdc_tx_fifo_size", _as_int(cfg_in.get("cdc_tx_fifo_size", inst_cfg.get("cdc_tx_fifo_size", 128)), 128))
+        inst_cfg.setdefault("cdc_rx_fifo_size", _as_int(cfg_in.get("cdc_rx_fifo_size", inst_cfg.get("cdc_rx_fifo_size", 128)), 128))
+        # CDC queue size
+        inst_cfg.setdefault("cdc_queue_size", _as_int(cfg_in.get("cdc_queue_size", inst_cfg.get("cdc_queue_size", 3)), 3))
+        # DMA section name
+        inst_cfg.setdefault("dma_section", cfg_in.get("dma_section", inst_cfg.get("dma_section", "")))
+
+        # Descriptor information
+        inst_cfg.setdefault("vid", _as_int(cfg_in.get("vid", inst_cfg.get("vid", 0x0483)), 0x0483))
+        inst_cfg.setdefault("pid", _as_int(cfg_in.get("pid", inst_cfg.get("pid", 0x5740)), 0x5740))
+        inst_cfg.setdefault("bcd", _as_int(cfg_in.get("bcd", inst_cfg.get("bcd", 0xf407)), 0xf407))
+        inst_cfg.setdefault("manufacturer", cfg_in.get("manufacturer", inst_cfg.get("manufacturer", "XRobot")))
+        inst_cfg.setdefault("product", cfg_in.get("product", inst_cfg.get("product", f"STM32 XRUSB {instance} CDC Demo")))
+        inst_cfg.setdefault("serial", cfg_in.get("serial", inst_cfg.get("serial", "123456789")))
+
+        # Get the final value from settings for code generation
+        ep0_sz = int(inst_cfg["ep0_packet_size"])
+        tx_buf_sz = int(inst_cfg["tx_buffer_size"])   # USB DMA
+        rx_buf_sz = int(inst_cfg["rx_buffer_size"])   # USB DMA
+        tx_fifo_size = int(inst_cfg["tx_fifo_size"])  # EP1 HW FIFO
+        rx_fifo_size = int(inst_cfg["rx_fifo_size"])  # EP1 HW FIFO
+        cdc_tx_fifo_size = int(inst_cfg["cdc_tx_fifo_size"])
+        cdc_rx_fifo_size = int(inst_cfg["cdc_rx_fifo_size"])
+        cdc_queue_size = int(inst_cfg["cdc_queue_size"])
+        vid = int(inst_cfg["vid"])
+        pid = int(inst_cfg["pid"])
+        bcd = int(inst_cfg["bcd"])
+        manufacturer = str(inst_cfg["manufacturer"]).replace('"', '\\"')
+        product = str(inst_cfg["product"]).replace('"', '\\"')
+        serial = str(inst_cfg["serial"]).replace('"', '\\"')
+
+        # Size enum for EP0
+        size_enum = {8: "SIZE_8", 16: "SIZE_16", 32: "SIZE_32", 64: "SIZE_64"}[ep0_sz]
+        lang_var = f"{inst_lower}_lang_pack".upper()
+        cdc_var = f"{inst_lower}_cdc"
+        pcd_handle = f"hpcd_USB_OTG_{speed}" if is_otg else f"hpcd_USB_{speed}"
+        instance_type = "STM32USBDeviceOtgFS" if (is_otg and speed == "FS") else \
+            "STM32USBDeviceOtgHS" if (is_otg and speed == "HS") else \
+            "STM32USBDeviceDevFs"
+
+        # Generate device construction code (buffer variables are defined elsewhere)
+        code = []
+        code.append(
+            f"  static constexpr auto {lang_var} = "
+            "LibXR::USB::DescriptorStrings::MakeLanguagePack("
+            "LibXR::USB::DescriptorStrings::Language::EN_US, "
+            f"\"{manufacturer}\", \"{product}\", \"{serial}\");"
+        )
+        # CDC construction with queue size
+        code.append(f"  LibXR::USB::CDC {cdc_var}({cdc_rx_fifo_size}, {cdc_tx_fifo_size}, {cdc_queue_size});\n")
+
+        if is_otg:
+            code.append(f"  {instance_type} {obj}(")
+            code.append(f"      &{pcd_handle},")
+            code.append(f"      {rx_fifo_size},")
+            code.append(f"      {{{inst_lower}_ep0_out_buf, {inst_lower}_ep1_out_buf}},")
+            code.append("      {" + ", ".join([
+                f"{{{inst_lower}_ep0_in_buf, {ep0_sz}}}",
+                f"{{{inst_lower}_ep1_in_buf, {tx_fifo_size}}}",
+                f"{{{inst_lower}_ep2_in_buf, 8}}",
+            ]) + "},")
+            code.append(f"      USB::DeviceDescriptor::PacketSize0::{size_enum},")
+            code.append(f"      0x{vid:X}, 0x{pid:X}, 0x{bcd:X},")
+            code.append(f"      {{&{lang_var}}},")
+            code.append(f"      {{{{&{cdc_var}}}}}")
+            code.append("  );")
+        else:
+            code.append(f"  {instance_type} {obj}(")
+            code.append(f"      &{pcd_handle},")
+            code.append("      {")
+            code.append(f"          {{{inst_lower}_ep0_in_buf, {inst_lower}_ep0_out_buf, {ep0_sz}, {ep0_sz}}},")
+            code.append(f"          {{{inst_lower}_ep1_in_buf, {inst_lower}_ep1_out_buf, {tx_fifo_size}, {rx_fifo_size}}},")
+            code.append(f"          {{{inst_lower}_ep2_in_buf, 8, true}}")
+            code.append("      },")
+            code.append(f"      USB::DeviceDescriptor::PacketSize0::{size_enum},")
+            code.append(f"      0x{vid:X}, 0x{pid:X}, 0x{bcd:X},")
+            code.append(f"      {{&{lang_var}}},")
+            code.append(f"      {{{{&{cdc_var}}}}}")
+            code.append("  );")
+
+        code.append(f"  {obj}.Init();")
+        code.append(f"  {obj}.Start();\n")
+
+        _register_device(f"{cdc_var}", "UART")
+        return "main", "\n".join(code)
+
 
 def _generate_header_includes(use_xrobot: bool = False, use_hw_cntr: bool = False) -> str:
     """Generate essential header inclusions with optional XRobot components."""
     headers = [
         '#include "app_main.h"\n',
+        '#include "cdc.hpp"',
         '#include "libxr.hpp"',
         '#include "main.h"',
         '#include "stm32_adc.hpp"',
         '#include "stm32_can.hpp"',
         '#include "stm32_canfd.hpp"',
         '#include "stm32_dac.hpp"',
+        '#include "stm32_flash.hpp"',
         '#include "stm32_gpio.hpp"',
         '#include "stm32_i2c.hpp"',
         '#include "stm32_power.hpp"',
@@ -596,7 +789,7 @@ def _generate_header_includes(use_xrobot: bool = False, use_hw_cntr: bool = Fals
         '#include "stm32_spi.hpp"',
         '#include "stm32_timebase.hpp"',
         '#include "stm32_uart.hpp"',
-        '#include "stm32_usb.hpp"',
+        '#include "stm32_usb_dev.hpp"',
         '#include "stm32_watchdog.hpp"',
         '#include "flash_map.hpp"'
     ]
@@ -629,11 +822,10 @@ def _generate_extern_declarations(project_data: dict) -> str:
     for p_type, instances in peripherals.items():
         for instance in instances:
             if p_type == 'USB':
-                usb_info = _detect_usb_device(project_data)
-                if usb_info is not None and libxr_settings.get("SYSTEM", "None") != 'ThreadX':
-                    externs.add(f"extern USBD_HandleTypeDef {usb_info['handler']};")
-                    externs.add(f"extern uint8_t UserTxBuffer{usb_info['speed']}[APP_TX_DATA_SIZE];")
-                    externs.add(f"extern uint8_t UserRxBuffer{usb_info['speed']}[APP_RX_DATA_SIZE];")
+                # New USB stack uses PCD handle (e.g., hpcd_USB_FS / hpcd_USB_HS)
+                if instance == 'USB':
+                    instance = "USB_FS"
+                externs.add(f"extern PCD_HandleTypeDef hpcd_{instance};")
             elif p_type == 'DAC':
                 externs.add(f'extern DAC_HandleTypeDef h{instance.lower()};')
             else:
@@ -741,27 +933,23 @@ def configure_watchdog(project_data: dict) -> str:
 # Terminal Configuration
 # --------------------------
 def configure_terminal(project_data: dict) -> str:
-    code = ""
+    code = "  /* Terminal Configuration */\n"
     terminal_source = libxr_settings.get("terminal_source", "").lower()
-    usb_info = _detect_usb_device(project_data)
-    uart_devices = list(project_data.get("Peripherals", {}).get("USART", {}).keys())
+
     # User-specified terminal source
     if terminal_source != "":
-        if usb_info:
-            code += _setup_usb(usb_info, libxr_settings.get("SYSTEM", "None"))
-        if terminal_source == "usb" and usb_info:
-            code += _setup_usb_terminal(usb_info, libxr_settings.get("SYSTEM", "None"))
-        elif terminal_source in [d.lower() for d in uart_devices]:
-            dev = terminal_source.upper()
-            code += f"""  STDIO::read_ = {dev.lower()}.read_port_;
-  STDIO::write_ = {dev.lower()}.write_port_;
-"""
-        else:
-            logging.warning(f"Invalid terminal_source: {terminal_source}")
-    else:
-        if usb_info:
-            code += _setup_usb(usb_info, libxr_settings.get("SYSTEM", "None"))
-
+        dev = terminal_source.lower()
+        # Device must be registered and of type UART, otherwise log a warning and skip
+        info = device_aliases.get(dev)
+        if not info or info.get("type") != "UART":
+            logging.warning(f"terminal_source '{terminal_source}' is not registered as UART, terminal will not be initialized!")
+            return code
+        dev = terminal_source.upper()
+        code += (
+            f"  STDIO::read_ = {dev.lower()}.read_port_;\n"
+            f"  STDIO::write_ = {dev.lower()}.write_port_;\n"
+        )
+        
     if terminal_source != "":
         term_config = libxr_settings.setdefault("Terminal", {})
         params = [
@@ -777,7 +965,7 @@ def configure_terminal(project_data: dict) -> str:
             thread_stack_depth = term_config.setdefault("thread_stack_depth", 1024)
             thread_priority = term_config.setdefault("thread_priority", 3)
 
-        code += f"""\
+        code += f"""
   RamFS ramfs("XRobot");
   Terminal<{', '.join(map(str, params))}> terminal(ramfs);
 """
@@ -796,37 +984,6 @@ def configure_terminal(project_data: dict) -> str:
         _register_device("ramfs", "RamFS")
         _register_device("terminal", f"Terminal<{', '.join(map(str, params))}>")
     return code
-
-
-def _setup_usb_terminal(usb_info: dict, system: str) -> str:
-    if system == 'ThreadX':
-        return (
-            "  // STDIO::read_ = uart_cdc.read_port_;\n"
-            "  // STDIO::write_ = uart_cdc.write_port_;\n"
-        )
-    return (
-        "  STDIO::read_ = uart_cdc.read_port_;\n"
-        "  STDIO::write_ = uart_cdc.write_port_;\n"
-    )
-
-
-def _setup_usb(usb_info: dict, system: str) -> str:
-    _register_device('uart_cdc', "UART")
-
-    usb_config = libxr_settings.setdefault("USB", {})
-    tx_queue = usb_config.setdefault("tx_queue_size", 5)
-
-    if system == 'ThreadX':
-        return (
-            f"  // HAL_PCDEx_SetRxFiFo/HAL_PCDEx_SetTxFiFo\n"
-            f"  // STM32VirtualUART uart_cdc(&hpcd_xxx_FS, 2048, 2, 2048, 2, 15, 256);\n"
-        )
-
-    return (
-        f"  STM32VirtualUART uart_cdc({usb_info['handler']}, "
-        f"UserTxBuffer{usb_info['speed']}, UserRxBuffer{usb_info['speed']}, "
-        f"{tx_queue});\n"
-    )
 
 
 def _detect_usb_device(project_data: dict) -> dict:
@@ -886,7 +1043,7 @@ def generate_xrobot_hardware_container() -> str:
             entry_list.append(f"  LibXR::Entry<LibXR::{dev_type}>({{{dev}, {{{alias_str}}}}})")  # With aliases
 
     entry_body = ",\n  ".join(entry_list)
-    return f"\n  LibXR::HardwareContainer peripherals{{\n  {entry_body}\n  }};\n"   # 只变量进f-string
+    return f"\n  LibXR::HardwareContainer peripherals{{\n  {entry_body}\n  }};\n"  # 只变量进f-string
 
 
 # --------------------------
@@ -899,20 +1056,28 @@ def generate_full_code(project_data: dict, use_xrobot: bool, use_hw_cntr: bool, 
         '/* User Code Begin 1 */',
         preserve_user_blocks(existing_code, 1),
         '/* User Code End 1 */',
+        '// NOLINTBEGIN',
+        '// clang-format off',
         _generate_extern_declarations(project_data),
 
         generate_dma_resources(project_data),
 
         '\nextern "C" void app_main(void) {',
+        '  // clang-format on',
+        '  // NOLINTEND',
         '  /* User Code Begin 2 */',
         preserve_user_blocks(existing_code, 2),
         '  /* User Code End 2 */',
+        '  // clang-format off',
+        '  // NOLINTBEGIN',
         _generate_core_system(project_data),
         generate_gpio_config(project_data),
         generate_peripheral_instances(project_data),
         configure_terminal(project_data),
         configure_watchdog(project_data),
         generate_xrobot_hardware_container() if use_hw_cntr else '',
+        '  // clang-format on',
+        '  // NOLINTEND',
         '  /* User Code Begin 3 */',
         user_code_def_3 if preserve_user_blocks(existing_code, 3) == '' else '',
         preserve_user_blocks(existing_code, 3),

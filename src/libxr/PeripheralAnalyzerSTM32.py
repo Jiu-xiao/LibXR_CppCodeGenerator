@@ -403,8 +403,6 @@ class ADCParser(PeripheralParser):
 # --------------------------
 # DAC Parser
 # --------------------------
-import re
-
 class DACParser(PeripheralParser):
     """Parse DAC peripheral configurations."""
 
@@ -708,81 +706,72 @@ class CANParser(PeripheralParser):
 # USB Parser
 # --------------------------
 class USBParser(PeripheralParser):
-    """Handle USB peripheral configurations with endpoint parsing."""
-
-    _ENDPOINT_PATTERN = re.compile(r"EP(\d+)_(\w+)")  # EP1_Mode, EP2_Type etc.
+    """
+    Parse USB peripheral configurations from CubeMX .ioc style raw_map.
+    """
 
     def parse(self, p_type: str) -> None:
-        """Process USB parameters and endpoint configurations."""
+        """
+        Process USB parameters from CubeMX .ioc file.
+
+        Args:
+            p_type (str): The type of peripheral to process (should be "USB").
+        """
+        usb_names = set()
+        # 1. Find all USB peripheral names in the raw_map
         for key, value in self.raw_map.items():
-            if not key.startswith("USB"):
-                continue
+            if key.startswith("Mcu.IP") and "USB" in value:
+                usb_names.add(value)
+            elif re.match(r"^USB(_OTG(_FS|_HS))?\.", key):
+                usb_names.add(key.split('.')[0])
 
-            parts = key.split(".")
-            usb_name = parts[0]
+        logging.info(f"[USBParser] Detected USB peripherals: {usb_names}")
+
+        for usb_name in usb_names:
             self._ensure_usb_instance(usb_name)
+            logging.info(f"[USBParser] Parsing configuration for: {usb_name}")
 
-            # Global USB properties
-            if len(parts) == 2:
-                self._process_global_property(usb_name, parts[1], value)
+            for key, value in self.raw_map.items():
+                if not key.startswith(usb_name):
+                    continue
 
-            # Endpoint configurations (EP1_Mode, EP2_Type etc.)
-            elif len(parts) > 2 and "EP" in parts[1]:
-                self._process_endpoint(usb_name, parts[1], value)
+                rest_key = key[len(usb_name) + 1:]  # Remove the "USB_OTG_FS." prefix
+                # 2.1 Handle profile-specific parameters
+                if '-' in rest_key:
+                    param, profile = rest_key.split('-', 1)
+                    logging.debug(f"[USBParser] Profile param: {usb_name}.{param} (profile={profile}), value={value}")
+                    self.config.peripherals["USB"][usb_name].setdefault("profiles", {})
+                    self.config.peripherals["USB"][usb_name]["profiles"].setdefault(profile, {})
+                    if param == "IPParameters":
+                        self.config.peripherals["USB"][usb_name]["profiles"][profile][param] = value.split(',')
+                        logging.info(
+                            f"[USBParser] IPParameters for profile={profile}: "
+                            f"{self.config.peripherals['USB'][usb_name]['profiles'][profile][param]}"
+                        )
+                    else:
+                        self.config.peripherals["USB"][usb_name]["profiles"][profile][param] = value
+                else:
+                    # 2.2 Handle global parameters
+                    logging.debug(f"[USBParser] Global param: {usb_name}.{rest_key} = {value}")
+                    if rest_key == "IPParameters":
+                        self.config.peripherals["USB"][usb_name][rest_key] = value.split(',')
+                        logging.info(
+                            f"[USBParser] IPParameters: "
+                            f"{self.config.peripherals['USB'][usb_name][rest_key]}"
+                        )
+                    else:
+                        self.config.peripherals["USB"][usb_name][rest_key] = value
 
     def _ensure_usb_instance(self, usb_name: str) -> None:
-        """Initialize USB instance with default structure."""
+        """
+        Ensure the USB peripheral entry exists in the configuration.
+
+        Args:
+            usb_name (str): The name of the USB peripheral.
+        """
         if usb_name not in self.config.peripherals["USB"]:
-            self.config.peripherals["USB"][usb_name] = {
-                "Mode": None,
-                "Speed": None,
-                "VBus": False,
-                "Endpoints": defaultdict(dict),
-            }
-
-    def _process_global_property(self, usb_name: str, prop: str, value: str) -> None:
-        """Handle global USB properties."""
-        prop_map = {
-            "Mode": ("Mode", str),
-            "Speed": ("Speed", str),
-            "VbusMonitoring": ("VBus", lambda v: v == "ENABLE"),
-        }
-
-        if mapping := prop_map.get(prop):
-            key, converter = mapping
-            try:
-                self.config.peripherals["USB"][usb_name][key] = converter(value)
-            except ValueError:
-                logging.warning(f"Invalid USB {prop} value: {value}")
-
-    def _process_endpoint(self, usb_name: str, ep_key: str, value: str) -> None:
-        """Parse endpoint configurations with validation."""
-        if match := self._ENDPOINT_PATTERN.match(ep_key):
-            ep_num = match.group(1)
-            ep_prop = match.group(2)
-            endpoint_id = f"EP{ep_num}"
-
-            # Validate endpoint number (0-15 for USB FS)
-            if 0 <= int(ep_num) <= 15:
-                endpoint = self.config.peripherals["USB"][usb_name]["Endpoints"][
-                    endpoint_id
-                ]
-
-                # Special handling for endpoint type
-                if ep_prop == "Type":
-                    endpoint["Type"] = self._normalize_ep_type(value)
-                else:
-                    endpoint[ep_prop] = value
-
-    def _normalize_ep_type(self, raw_type: str) -> str:
-        """Convert CubeMX EP types to simplified format."""
-        type_map = {
-            "BULK": "Bulk",
-            "INTERRUPT": "Interrupt",
-            "ISOCHRONOUS": "Isochronous",
-            "CONTROL": "Control",
-        }
-        return type_map.get(raw_type.split("_")[-1], "Unknown")
+            self.config.peripherals["USB"][usb_name] = {}
+            logging.debug(f"[USBParser] Initialized USB instance: {usb_name}")
 
 
 # --------------------------
