@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 
 def modify_interrupt_file(file_path):
-    """Modify interrupt handler files to add UART Rx and USB callbacks."""
+    """Modify interrupt handler files to add UART Rx callbacks."""
     with open(file_path, "r", encoding="utf-8") as f:
         content = f.readlines()
 
@@ -18,30 +18,19 @@ def modify_interrupt_file(file_path):
 extern void STM32_UART_ISR_Handler_IDLE(UART_HandleTypeDef *huart);
 #endif"""
 
-    extern_usb = """/* LibXR USB Tx Cplt callback (Auto-generated, For STM32F1) */
-#if defined(STM32F1) && defined(HAL_PCD_MODULE_ENABLED)
-extern void STM32_USB_ISR_Handler_F1(void);
-#endif"""
-
     uart_callback_template = """  /* LibXR UART IDLE callback (Auto-generated) */
 #ifdef HAL_UART_MODULE_ENABLED
   STM32_UART_ISR_Handler_IDLE(&{var});
 #endif"""
 
-    usb_callback = """  /* LibXR USB Tx Cplt callback (Auto-generated, For STM32F1) */
-#if defined(STM32F1) && defined(HAL_PCD_MODULE_ENABLED)
-  STM32_USB_ISR_Handler_F1();
-#endif
-"""
-
     modified = False
     modified_functions = []
 
     # Check if extern declaration exists
-    extern_declarations = extern_usb + "\n" + extern_uart + "\n"
+    extern_declarations = extern_uart + "\n"
 
     joined_content = "".join(content)
-    if extern_usb not in joined_content or extern_uart not in joined_content:
+    if extern_uart not in joined_content:
         for i, line in enumerate(content):
             if "/* USER CODE BEGIN 0 */" in line:
                 content.insert(i + 1, extern_declarations)
@@ -78,31 +67,6 @@ extern void STM32_USB_ISR_Handler_F1(void);
                         callback_call = uart_callback_template.format(var=huart_var)
                         if callback_call.strip() not in "".join(content[k : k + 8]):
                             content.insert(k + 1, callback_call + "\n")
-                            modified = True
-                            modified_functions.append(irq_func_name)
-                        break
-
-            # Handle USB IRQ
-            if irq_func_name in ("USB_HP_CAN1_TX", "USB_LP_CAN1_RX0"):
-                # USER CODE BEGIN ... IRQn 0
-                user_code_begin_0_pattern = re.compile(
-                    rf"/\*\s*USER CODE BEGIN {irq_func_name}_IRQn 0\s*\*/"
-                )
-                for k in range(i, len(content)):
-                    if user_code_begin_0_pattern.search(content[k]):
-                        if usb_callback.strip() not in "".join(content[k: k + 8]):
-                            content.insert(k + 1, usb_callback + "\n")
-                            modified = True
-                        break
-
-                # USER CODE BEGIN ... IRQn 1
-                user_code_begin_1_pattern = re.compile(
-                    rf"/\*\s*USER CODE BEGIN {irq_func_name}_IRQn 1\s*\*/"
-                )
-                for k in range(i, len(content)):
-                    if user_code_begin_1_pattern.search(content[k]):
-                        if usb_callback.strip() not in "".join(content[k: k + 8]):
-                            content.insert(k + 1, usb_callback + "\n")
                             modified = True
                             modified_functions.append(irq_func_name)
                         break
