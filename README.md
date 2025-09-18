@@ -134,7 +134,7 @@ Parses `.ioc`, generates YAML and C++ code, patches interrupt handlers, and init
 
 - `.config.yaml`:
 
-  自动生成的 C++ 驱动代码(如 `app_main.cpp`  
+  自动生成的 C++ 驱动代码(如 `app_main.cpp`)  
   Generated C++ driver code (e.g. `app_main.cpp`)
 
 - 补丁后的中断处理函数(如 `stm32xx_it.c`)  
@@ -283,8 +283,8 @@ sectors:
 
 ### `xr_stm32_it`
 
-批量修改 STM32 中断处理文件，插入 UART IDLE 回调和 USB F1 回调支持。
-Modifies STM32 interrupt handlers to add UART IDLE callback and USB F1 callback support for LibXR.
+批量修改 STM32 中断处理文件，插入 UART IDLE 回调。  
+Modifies STM32 interrupt handlers to add UART IDLE callback for LibXR.
 
 ```bash
 usage: xr_stm32_it [-h] input_dir
@@ -302,9 +302,6 @@ usage: xr_stm32_it [-h] input_dir
 - 查找每个 `*_it.c` 文件中的 `HAL_UART_IRQHandler(&huartX)` 调用  
   Find `HAL_UART_IRQHandler(&huartX)` calls in each `*_it.c` file
 
-- 查找 `USB_HP_CAN1_TX_IRQHandler` 和 `USB_LP_CAN1_RX0_IRQHandler` 中断函数  
-  Find `USB_HP_CAN1_TX_IRQHandler` and `USB_LP_CAN1_RX0_IRQHandler` handlers
-
 - 向对应中断函数的 `/* USER CODE BEGIN XXX_IRQn 0/1 */` 区域插入：  
   Add to the `/* USER CODE BEGIN XXX_IRQn 0/1 */` section of the corresponding interrupt function
   
@@ -315,21 +312,11 @@ usage: xr_stm32_it [-h] input_dir
 #endif
 ```
 
-- 对于 USB 中断（仅 STM32F1，且启用 HAL_PCD_MODULE），插入：  
-  For USB interrupts (STM32F1 only, with HAL_PCD_MODULE enabled)
+- 若未定义 `STM32_UART_ISR_Handler_IDLE` 的 `extern` 声明，将插入至 `/* USER CODE BEGIN 0 */` 区域下  
+  Insert at `/* USER CODE BEGIN 0 */` if `STM32_UART_ISR_Handler_IDLE` is not defined
 
-```c
-/* LibXR USB Tx Cplt callback (Auto-generated, For STM32F1) */
-#if defined(STM32F1) && defined(HAL_PCD_MODULE_ENABLED)
-  STM32_USB_ISR_Handler_F1();
-#endif
-```
-
-- 若未定义 `STM32_UART_ISR_Handler_IDLE`和 `STM32_USB_ISR_Handler_F1`的 `extern` 声明，将插入至 `/* USER CODE BEGIN 0 */` 区域下  
-  Insert at `/* USER CODE BEGIN 0 */` if `STM32_UART_ISR_Handler_IDLE` and `STM32_USB_ISR_Handler_F1` is not defined
-
-- 支持多个 UART 和 USB 接口  
-  Support for multiple UART and USB interfaces
+- 支持多个 UART 接口  
+  Support for multiple UART interfaces
 
 #### 📦 输出内容 (Outputs)
 
@@ -415,7 +402,6 @@ usage: xr_libxr_cmake [-h] input_dir
 
   - `xx.ioc`
   - `CMakeLists.txt`
-  - `cmake/gcc-arm-none-eabi.cmake`
   - `Core/Inc`, `Core/Src`
 
 #### ⚙️ 配置要求(Peripheral & Middleware)
@@ -429,11 +415,8 @@ usage: xr_libxr_cmake [-h] input_dir
 - 推荐启用 **FreeRTOS**，自动生成 `FreeRTOSConfig.h`  
   Recommended to enable **FreeRTOS** and generate `FreeRTOSConfig.h`
 
-- 若使用 USB 作为终端：  
-  If using USB as a terminal:
-
-  - 启用 `USB_DEVICE` 中间件，并选择 `Communication Device Class (CDC)`  
-    Enable `USB_DEVICE` middleware and select `Communication Device Class (CDC)`
+  - 关闭 `USB_DEVICE` 或 `USBX` 中间件  
+    Disable `USB_DEVICE` or `USBX` middleware.
 
 #### ⏱️ Timebase 配置建议(Timebase Configuration)
 
@@ -491,8 +474,8 @@ xr_stm32_toolchain_switch clang --picolibc
 - 自动修改 `CMakePresets.json`，切换默认工具链  
   Automatically modify `CMakePresets.json` to switch the default toolchain
 
-- 如为 Clang，同步修改 `cmake/starm-clang.cmake` 的标准库类型  
-  If Clang, synchronize the standard library type in `cmake/starm-clang.cmake`
+- 如使用 Clang，同步修改 `cmake/starm-clang.cmake` 的标准库类型  
+  If using Clang, synchronize the standard library type in `cmake/starm-clang.cmake`
 
 ---
 
