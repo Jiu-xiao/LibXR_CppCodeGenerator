@@ -117,8 +117,8 @@ Parses `.ioc`, generates YAML and C++ code, patches interrupt handlers, and init
 
 - `-t, --terminal <TERMINAL>`：
   
-  串口设备名称(如 `usart1` `usb`)  
-  Terminal device name (e.g. `usart1` `usb`).
+  串口设备名称(如 `usart1` `usb_fs_cdc`)  
+  Terminal device name (e.g. `usart1` `usb_fs_cdc`).
 
 - `--xrobot`：
 

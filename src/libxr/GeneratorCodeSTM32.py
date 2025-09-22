@@ -453,7 +453,7 @@ def generate_dma_resources(project_data: dict) -> str:
                 dma_code.append(f"static uint8_t {inst_lower}_ep0_out_buf[{ep0}]{sec_str};")
                 dma_code.append(f"static uint8_t {inst_lower}_ep1_in_buf[{tx_sz}]{sec_str};")
                 dma_code.append(f"static uint8_t {inst_lower}_ep1_out_buf[{rx_sz}]{sec_str};")
-                dma_code.append(f"static uint8_t {inst_lower}_ep2_in_buf[8]{sec_str};")
+                dma_code.append(f"static uint8_t {inst_lower}_ep2_in_buf[16]{sec_str};")
 
     # Final output with section header if any code generated
     if dma_code:
@@ -732,7 +732,7 @@ class PeripheralFactory:
             f"\"{manufacturer}\", \"{product}\", \"{serial}\");"
         )
         # CDC construction with queue size
-        code.append(f"  LibXR::USB::CDC {cdc_var}({cdc_rx_fifo_size}, {cdc_tx_fifo_size}, {cdc_queue_size});\n")
+        code.append(f"  LibXR::USB::CDCUart {cdc_var}({cdc_rx_fifo_size}, {cdc_tx_fifo_size}, {cdc_queue_size});\n")
 
         if is_otg:
             code.append(f"  {instance_type} {obj}(")
@@ -742,7 +742,7 @@ class PeripheralFactory:
             code.append("      {" + ", ".join([
                 f"{{{inst_lower}_ep0_in_buf, {ep0_sz}}}",
                 f"{{{inst_lower}_ep1_in_buf, {tx_fifo_size}}}",
-                f"{{{inst_lower}_ep2_in_buf, 8}}",
+                f"{{{inst_lower}_ep2_in_buf, 16}}",
             ]) + "},")
             code.append(f"      USB::DeviceDescriptor::PacketSize0::{size_enum},")
             code.append(f"      0x{vid:X}, 0x{pid:X}, 0x{bcd:X},")
@@ -755,7 +755,7 @@ class PeripheralFactory:
             code.append("      {")
             code.append(f"          {{{inst_lower}_ep0_in_buf, {inst_lower}_ep0_out_buf, {ep0_sz}, {ep0_sz}}},")
             code.append(f"          {{{inst_lower}_ep1_in_buf, {inst_lower}_ep1_out_buf, {tx_fifo_size}, {rx_fifo_size}}},")
-            code.append(f"          {{{inst_lower}_ep2_in_buf, 8, true}}")
+            code.append(f"          {{{inst_lower}_ep2_in_buf, 16, true}}")
             code.append("      },")
             code.append(f"      USB::DeviceDescriptor::PacketSize0::{size_enum},")
             code.append(f"      0x{vid:X}, 0x{pid:X}, 0x{bcd:X},")
@@ -774,7 +774,7 @@ def _generate_header_includes(use_xrobot: bool = False, use_hw_cntr: bool = Fals
     """Generate essential header inclusions with optional XRobot components."""
     headers = [
         '#include "app_main.h"\n',
-        '#include "cdc.hpp"',
+        '#include "cdc_uart.hpp"',
         '#include "libxr.hpp"',
         '#include "main.h"',
         '#include "stm32_adc.hpp"',
