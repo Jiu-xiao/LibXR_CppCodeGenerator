@@ -100,7 +100,8 @@ Generates platform-agnostic C++ hardware abstraction code from YAML.
 Automatically configures an STM32CubeMX project.
 
 ```bash
-usage: xr_cubemx_cfg [-h] -d DIRECTORY [-t TERMINAL] [--xrobot]
+usage: xr_cubemx_cfg [-h] -d DIRECTORY [-t TERMINAL] [--xrobot] [--commit COMMIT] [--git-source GIT_SOURCE]
+                     [--git-mirrors GIT_MIRRORS]
 ```
 
 解析 `.ioc` 文件，生成 YAML 和 C++ 驱动代码，补丁中断处理函数，并初始化项目结构  
@@ -129,6 +130,39 @@ Parses `.ioc`, generates YAML and C++ code, patches interrupt handlers, and init
   
   指定 LibXR 仓库commit版本  
   Specify the LibXR repository commit version
+
+- `--git-source`
+
+  Git 源的 base URL 或完整仓库 URL，或使用 `auto`/`github`（默认：`auto`）。  
+  A Git source base URL or a full repository URL, or `auto`/`github` (default: `auto`).
+
+  示例 / Examples:
+  ```bash
+  --git-source https://gitee.com/jiu-xiao/libxr
+  ```
+
+- `--git-mirrors`
+
+  逗号分隔的镜像 base/完整仓库 URL 列表，仅在 --git-source=auto 时作为候选参与测速。  
+  Comma-separated mirror base/full repo URLs; used as candidates when --git-source=auto.
+
+  示例 / Examples:
+  ```bash
+  --git-mirrors "https://gitee.com/jiu-xiao/libxr"
+  ```
+
+  或通过环境变量追加 / Or via environment variable:
+  ```bash
+  export XR_GIT_MIRRORS="https://gitee.com/jiu-xiao/libxr"
+  ```
+
+#### 🌐 网络与镜像说明 (Networking & Mirrors)
+
+工具会在 GitHub 与内置/自定义镜像间测速并选择最快源。  
+The tool benchmarks GitHub and built-in/custom mirrors, then picks the fastest.
+
+选中的源会作为子模块的 origin 远程地址。  
+The chosen source becomes the submodule’s origin remote.
 
 #### 📦 输出内容 (Outputs)
 

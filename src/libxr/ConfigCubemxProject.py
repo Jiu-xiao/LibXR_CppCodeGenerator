@@ -10,6 +10,10 @@ import argparse
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
+DEFAULT_MIRRORS = [
+    "https://gitee.com/jiu-xiao/libxr",
+]
+
 
 def is_git_repo(path):
     try:
@@ -44,15 +48,26 @@ def get_current_branch(path):
     return result.stdout.strip()
 
 
-def run_command(command, ignore_error=False):
-    result = subprocess.run(command, shell=True, capture_output=True, text=True)
-    if result.returncode == 0:
-        logging.info(f"[OK] {command}")
-        return result.stdout
+def _fmt_cmd(cmd):
+    if isinstance(cmd, (list, tuple)):
+        return " ".join(shlex.quote(str(x)) for x in cmd)
+    return str(cmd)
+
+
+def run_command(cmd, ignore_error=False):
+    """Run a command. Accepts either a list/tuple (preferred, shell=False) or a string (shell=True)."""
+    if isinstance(cmd, (list, tuple)):
+        result = subprocess.run(cmd, capture_output=True, text=True)
     else:
-        logging.error(f"[FAILED] {command}\n{result.stderr}")
-        if not ignore_error:
-            sys.exit(1)
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    if result.returncode == 0:
+        logging.info(f"[OK] {_fmt_cmd(cmd)}")
+        return result.stdout
+    if ignore_error:
+        logging.warning(f"[IGNORED FAILURE] {_fmt_cmd(cmd)}\n{result.stderr}")
+        return result.stdout
+    logging.error(f"[FAILED] {_fmt_cmd(cmd)}\n{result.stderr}")
+    sys.exit(1)
 
 
 def find_ioc_file(directory):
@@ -61,6 +76,49 @@ def find_ioc_file(directory):
         if file.endswith(".ioc"):
             return os.path.join(directory, file)
     return None
+
+
+def pick_git_base(default_base="https://github.com", mirrors=None, timeout=5.0):
+    """
+    Select the fastest accessible Git source among the default and mirrors.
+    Returns either a base URL or a full repository URL.
+    - default_base: e.g. https://github.com
+    - mirrors: a list of base URLs or full repo URLs
+    """
+    import time
+
+    def is_repo_url(s: str) -> bool:
+        return s.endswith(".git") or s.rstrip("/").split("/")[-1].lower() == "libxr"
+
+    def to_probe_url(base_or_repo: str) -> str:
+        if is_repo_url(base_or_repo):
+            return base_or_repo
+        return f"{base_or_repo.rstrip('/')}/Jiu-Xiao/libxr.git"
+
+    candidates = [default_base] + [m.strip() for m in (mirrors or []) if m.strip()]
+    scores = []
+    for item in candidates:
+        url = to_probe_url(item)
+        start = time.time()
+        try:
+            r = subprocess.run(
+                ["git", "ls-remote", "-h", url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout
+            )
+            if r.returncode == 0:
+                scores.append((time.time() - start, item))
+        except subprocess.TimeoutExpired:
+            pass
+    return min(scores)[1] if scores else default_base
+
+
+def make_repo_url(base_or_repo: str, owner="Jiu-Xiao", repo="libxr"):
+    # If a full repository URL is provided (.git or ends with repo name), return it as-is
+    if base_or_repo.endswith(".git") or base_or_repo.rstrip("/").split("/")[-1].lower() == repo.lower():
+        return base_or_repo
+    return f"{base_or_repo.rstrip('/')}/{owner}/{repo}.git"
 
 
 def create_gitignore_file(project_dir):
@@ -76,13 +134,10 @@ CMakeFiles/**
 """)
 
 
-def add_libxr(project_dir, libxr_commit=None):
+def add_libxr(project_dir, libxr_commit=None, git_base="https://github.com"):
     from pathlib import PurePosixPath
     sub_rel_path_posix = str(PurePosixPath("Middlewares") / "Third_Party" / "LibXR")
     libxr_path = os.path.join(project_dir, "Middlewares", "Third_Party", "LibXR")
-
-    def q(s: str) -> str:
-        return shlex.quote(s)
 
     midware_path = os.path.join(project_dir, "Middlewares")
     third_party_path = os.path.join(midware_path, "Third_Party")
@@ -92,7 +147,7 @@ def add_libxr(project_dir, libxr_commit=None):
             ["git", "-C", repo_root, "submodule", "status", "--", rel_path],
             capture_output=True, text=True
         )
-        return r.returncode == 0
+        return (r.returncode == 0) and (r.stdout.strip() != "")
 
     if not os.path.exists(midware_path):
         logging.info("Creating Middleware folder...")
@@ -103,41 +158,46 @@ def add_libxr(project_dir, libxr_commit=None):
 
     if not is_git_repo(project_dir):
         logging.warning(f"{project_dir} is not a Git repository. Initializing...")
-        run_command(f"git init {q(project_dir)}")
+        run_command(["git", "init", project_dir])
 
     if has_registered_submodule(project_dir, sub_rel_path_posix):
-        run_command(f"cd {q(project_dir)} && git submodule sync -- {q(sub_rel_path_posix)}", ignore_error=False)
-        run_command(f"cd {q(project_dir)} && git submodule update --init -- {q(sub_rel_path_posix)}",
-                    ignore_error=False)
+        run_command(["git", "-C", project_dir, "submodule", "sync", "--", sub_rel_path_posix], ignore_error=False)
+        run_command(
+            ["git", "-C", project_dir, "submodule", "update", "--init", "--recursive", "--", sub_rel_path_posix],
+            ignore_error=False
+        )
     else:
         logging.info("LibXR submodule not registered yet; skipping preemptive update.")
 
+    repo_url = make_repo_url(git_base, "Jiu-Xiao", "libxr")
     if not has_registered_submodule(project_dir, sub_rel_path_posix):
-        logging.info("Adding LibXR as submodule...")
+        logging.info(f"Adding LibXR as submodule from {repo_url} ...")
         run_command(
-            f"cd {q(project_dir)} && git submodule add https://github.com/Jiu-Xiao/libxr.git {q(sub_rel_path_posix)}"
+            ["git", "-C", project_dir, "submodule", "add", repo_url, sub_rel_path_posix]
         )
         logging.info("LibXR submodule added and initialized.")
     else:
         logging.info("LibXR submodule already registered.")
         if not os.path.exists(libxr_path):
-            run_command(f"cd {q(project_dir)} && git submodule update --init -- {q(sub_rel_path_posix)}")
+            run_command(
+                ["git", "-C", project_dir, "submodule", "update", "--init", "--recursive", "--", sub_rel_path_posix]
+            )
 
     if os.path.exists(libxr_path):
         logging.info("LibXR submodule path exists.")
         if is_git_clean(libxr_path):
             logging.info("LibXR submodule is clean. Fetching latest changes...")
             branch = get_current_branch(libxr_path)
-            run_command(f"cd {q(libxr_path)} && git fetch origin", ignore_error=True)
+            run_command(["git", "-C", libxr_path, "fetch", "origin"], ignore_error=True)
             if branch and branch != "HEAD":
-                run_command(f"cd {q(libxr_path)} && git checkout {q(branch)}", ignore_error=True)
-                run_command(f"cd {q(libxr_path)} && git pull origin {q(branch)}", ignore_error=True)
+                run_command(["git", "-C", libxr_path, "checkout", branch], ignore_error=True)
+                run_command(["git", "-C", libxr_path, "pull", "origin", branch], ignore_error=True)
             else:
                 logging.info("Submodule is in detached HEAD; skip branch-based pull.")
             logging.info("LibXR submodule updated to latest remote version.")
             if libxr_commit:
                 logging.info(f"Checking out LibXR to locked commit {libxr_commit}")
-                run_command(f"cd {q(libxr_path)} && git checkout {q(libxr_commit)}")
+                run_command(["git", "-C", libxr_path, "checkout", libxr_commit])
         else:
             logging.warning("LibXR submodule has local changes. Skipping update.")
 
@@ -186,6 +246,10 @@ def main():
     parser.add_argument("-t", "--terminal", default="", help="Optional terminal device source")
     parser.add_argument("--xrobot", action="store_true", help="Support XRobot")
     parser.add_argument("--commit", default="", help="Specify locked LibXR commit hash")
+    parser.add_argument("--git-source", default="auto",
+                        help="Git source base URL or full repo URL, or 'auto'/'github' (default: auto)")
+    parser.add_argument("--git-mirrors", default="",
+                        help="Comma-separated mirror base/repo URLs (will be tried when --git-source=auto)")
 
     args = parser.parse_args()
 
@@ -210,8 +274,23 @@ def main():
         logging.error(f"Directory {project_dir} does not exist")
         exit(1)
 
+    # Select Git source (auto benchmarks default and mirrors)
+    env_mirrors = os.environ.get("XR_GIT_MIRRORS", "")
+    cli_mirrors = [m for m in args.git_mirrors.split(",") if m.strip()]
+    all_mirrors = DEFAULT_MIRRORS + \
+                  [m.strip() for m in (env_mirrors.split(",") if env_mirrors else []) if m.strip()] + \
+                  cli_mirrors
+
+    if args.git_source == "auto":
+        git_base = pick_git_base(default_base="https://github.com", mirrors=all_mirrors, timeout=5.0)
+    elif args.git_source == "github":
+        git_base = "https://github.com"
+    else:
+        git_base = args.git_source
+    logging.info(f"Selected Git base/repo: {git_base}")
+
     # Add Git submodule if necessary
-    add_libxr(project_dir, libxr_commit if libxr_commit else None)
+    add_libxr(project_dir, libxr_commit if libxr_commit else None, git_base=git_base)
 
     # Find .ioc file
     ioc_file = find_ioc_file(project_dir)
@@ -220,6 +299,8 @@ def main():
         exit(1)
 
     logging.info(f"Found .ioc file: {ioc_file}")
+
+    create_gitignore_file(project_dir)
 
     # Create user directory
     user_path = create_user_directory(project_dir)
