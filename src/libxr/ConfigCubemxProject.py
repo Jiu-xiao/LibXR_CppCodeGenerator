@@ -3,6 +3,7 @@
 import logging
 import os
 import subprocess
+import shlex
 import sys
 
 import argparse
@@ -76,14 +77,22 @@ CMakeFiles/**
 
 
 def add_libxr(project_dir, libxr_commit=None):
+    from pathlib import PurePosixPath
+    sub_rel_path_posix = str(PurePosixPath("Middlewares") / "Third_Party" / "LibXR")
     libxr_path = os.path.join(project_dir, "Middlewares", "Third_Party", "LibXR")
+
+    def q(s: str) -> str:
+        return shlex.quote(s)
+
     midware_path = os.path.join(project_dir, "Middlewares")
     third_party_path = os.path.join(midware_path, "Third_Party")
 
-    try:
-        run_command(f"cd {project_dir} && git submodule update --init -- {libxr_path}", ignore_error=True)
-    except Exception:
-        pass
+    def has_registered_submodule(repo_root, rel_path):
+        r = subprocess.run(
+            ["git", "-C", repo_root, "submodule", "status", "--", rel_path],
+            capture_output=True, text=True
+        )
+        return r.returncode == 0
 
     if not os.path.exists(midware_path):
         logging.info("Creating Middleware folder...")
@@ -94,26 +103,41 @@ def add_libxr(project_dir, libxr_commit=None):
 
     if not is_git_repo(project_dir):
         logging.warning(f"{project_dir} is not a Git repository. Initializing...")
-        run_command(f"git init {project_dir}")
+        run_command(f"git init {q(project_dir)}")
 
-    if not os.path.exists(libxr_path):
+    if has_registered_submodule(project_dir, sub_rel_path_posix):
+        run_command(f"cd {q(project_dir)} && git submodule sync -- {q(sub_rel_path_posix)}", ignore_error=False)
+        run_command(f"cd {q(project_dir)} && git submodule update --init -- {q(sub_rel_path_posix)}",
+                    ignore_error=False)
+    else:
+        logging.info("LibXR submodule not registered yet; skipping preemptive update.")
+
+    if not has_registered_submodule(project_dir, sub_rel_path_posix):
         logging.info("Adding LibXR as submodule...")
         run_command(
-            f"cd {project_dir} && git submodule add https://github.com/Jiu-Xiao/libxr.git ./Middlewares/Third_Party/LibXR"
+            f"cd {q(project_dir)} && git submodule add https://github.com/Jiu-Xiao/libxr.git {q(sub_rel_path_posix)}"
         )
         logging.info("LibXR submodule added and initialized.")
     else:
-        logging.info("LibXR submodule already exists.")
+        logging.info("LibXR submodule already registered.")
+        if not os.path.exists(libxr_path):
+            run_command(f"cd {q(project_dir)} && git submodule update --init -- {q(sub_rel_path_posix)}")
+
+    if os.path.exists(libxr_path):
+        logging.info("LibXR submodule path exists.")
         if is_git_clean(libxr_path):
             logging.info("LibXR submodule is clean. Fetching latest changes...")
             branch = get_current_branch(libxr_path)
-            run_command(f"cd {libxr_path} && git fetch origin", ignore_error=True)
-            run_command(f"cd {libxr_path} && git checkout {branch}", ignore_error=True)
-            run_command(f"cd {libxr_path} && git pull origin {branch}", ignore_error=True)
+            run_command(f"cd {q(libxr_path)} && git fetch origin", ignore_error=True)
+            if branch and branch != "HEAD":
+                run_command(f"cd {q(libxr_path)} && git checkout {q(branch)}", ignore_error=True)
+                run_command(f"cd {q(libxr_path)} && git pull origin {q(branch)}", ignore_error=True)
+            else:
+                logging.info("Submodule is in detached HEAD; skip branch-based pull.")
             logging.info("LibXR submodule updated to latest remote version.")
             if libxr_commit:
                 logging.info(f"Checking out LibXR to locked commit {libxr_commit}")
-                run_command(f"cd {libxr_path} && git checkout {libxr_commit}")
+                run_command(f"cd {q(libxr_path)} && git checkout {q(libxr_commit)}")
         else:
             logging.warning("LibXR submodule has local changes. Skipping update.")
 
