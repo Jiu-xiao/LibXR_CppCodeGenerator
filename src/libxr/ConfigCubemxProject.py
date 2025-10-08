@@ -125,7 +125,7 @@ def create_gitignore_file(project_dir):
     gitignore_path = os.path.join(project_dir, ".gitignore")
     if not os.path.exists(gitignore_path):
         logging.info("Creating .gitignore file...")
-        with open(gitignore_path, "w") as gitignore_file:
+        with open(gitignore_path, "w", encoding="utf-8", newline="\n") as gitignore_file:
             gitignore_file.write("""build/**
 .history/**
 .cache/**

@@ -3,16 +3,19 @@ import argparse
 import os
 import logging
 import shutil
+from pathlib import Path
+from typing import Union
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
-file =(
+LIBXR_CMAKE_TEMPLATE = (
 '''set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # LibXR
 set(LIBXR_SYSTEM _LIBXR_SYSTEM_)
 set(LIBXR_DRIVER st)
+set(XROBOT_MODULES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Modules)
 add_subdirectory(Middlewares/Third_Party/LibXR)
 target_link_libraries(xr
     PUBLIC stm32cubemx
@@ -40,7 +43,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 )
 
 file(
-  GLOB LIBXR_USER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/User/*.cpp")
+    GLOB LIBXR_USER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/User/*.cpp")
 
 
 target_sources(${CMAKE_PROJECT_NAME}
@@ -67,16 +70,27 @@ endif()
 
 include_cmake_cmd = "include(${CMAKE_CURRENT_LIST_DIR}/cmake/LibXR.CMake)\n"
 
-def clean_cmake_build_dirs(input_directory):
+
+def clean_cmake_build_dirs(input_directory: Union[str, Path]) -> None:
+    input_directory = Path(input_directory)
     removed = False
-    for d in os.listdir(input_directory):
-        full_path = os.path.join(input_directory, d)
-        if os.path.isdir(full_path) and (d == "build" or d.startswith("cmake-build")):
-            logging.info(f"Removing build directory: {full_path}")
-            shutil.rmtree(full_path)
+    for d in input_directory.iterdir():
+        if d.is_dir() and (d.name == "build" or d.name.startswith("cmake-build")):
+            shutil.rmtree(d)
+            logging.info(f"Removed {d}")
             removed = True
     if not removed:
         logging.info("No build or cmake-build* directory found, nothing to clean.")
+
+
+def read_text_with_fallback(path: str) -> str:
+    for enc in ("utf-8", "utf-8-sig", "gb18030"):
+        try:
+            return Path(path).read_text(encoding=enc)
+        except UnicodeDecodeError:
+            continue
+    return Path(path).read_text(encoding="utf-8")
+
 
 def main():
     from libxr.PackageInfo import LibXRPackageInfo
@@ -95,7 +109,10 @@ def main():
 
     clean_cmake_build_dirs(input_directory)
 
-    file_path = os.path.join(input_directory, "cmake", "LibXR.CMake")
+    cmake_dir = os.path.join(input_directory, "cmake")
+    os.makedirs(cmake_dir, exist_ok=True)
+
+    file_path = os.path.join(cmake_dir, "LibXR.CMake")
 
     if os.path.exists(file_path):
         os.remove(file_path)
@@ -110,19 +127,17 @@ def main():
     else:
         system = "None"
 
-    with open(file_path, "w") as f:
-        f.write(file.replace("_LIBXR_SYSTEM_", system))
+    with open(file_path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(LIBXR_CMAKE_TEMPLATE.replace("_LIBXR_SYSTEM_", system))
     logging.info(f"Generated LibXR.CMake at: {file_path}")
-
     logging.info("LibXR.CMake generated successfully.")
 
-    main_cmake_path = input_directory + "/CMakeLists.txt"
+    main_cmake_path = os.path.join(input_directory, "CMakeLists.txt")
     if os.path.exists(main_cmake_path):
-        with open(main_cmake_path, "r") as f:
-            cmake_content = f.read()
+        cmake_content = read_text_with_fallback(main_cmake_path)
 
         if include_cmake_cmd not in cmake_content:
-            with open(main_cmake_path, "a") as f:
+            with open(main_cmake_path, "a", encoding="utf-8", newline="\n") as f:
                 f.write('\n# Add LibXR\n' + include_cmake_cmd)
             logging.info("LibXR.CMake included in CMakeLists.txt.")
         else:
@@ -130,4 +145,3 @@ def main():
     else:
         logging.error("CMakeLists.txt not found.")
         exit(1)
-
