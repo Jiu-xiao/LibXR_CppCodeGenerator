@@ -149,7 +149,7 @@ class PeripheralParser:
             config: ConfigurationManager,
             raw_map: Dict[str, str],
             gpio_pattern: Pattern = re.compile(
-                r"^(P[A-I]\d+(?:-[\w]+)*)\.(Signal|GPIO_Label|GPIO_PuPd)"
+                r"^(P[A-K]\d+(?:-[\w]+)*)(?:\\?\s*\([^)]+\))?\.(Signal|GPIO_Label|GPIO_PuPd)$"
             ),
     ) -> None:
         self.config = config
@@ -579,6 +579,23 @@ class I2CParser(PeripheralParser):
 
     def parse(self, p_type: str) -> None:
         for key, value in self.raw_map.items():
+            if key.startswith("Mcu.IP"):
+                val = str(value)
+                if val.startswith("I2C"):
+                    self._ensure_i2c_instance(p_type, val)
+                continue
+
+            if key.endswith(".Signal") and "I2C" in str(value):
+                portpin = key.split(".")[0]
+                per_sig = str(value)
+                i2c_name = per_sig.split("_")[0]
+                self._ensure_i2c_instance(p_type, i2c_name)
+                cfg = self.config.peripherals[p_type][i2c_name]
+                pins = cfg.setdefault("Pins", {"SCL": None, "SDA": None})
+                if per_sig.endswith("_SCL"): pins["SCL"] = portpin
+                if per_sig.endswith("_SDA"): pins["SDA"] = portpin
+                continue
+
             if not key.startswith("I2C"):
                 continue
 
@@ -586,7 +603,7 @@ class I2CParser(PeripheralParser):
             i2c_name = parts[0]
             self._ensure_i2c_instance(p_type, i2c_name)
 
-            prop = parts[1]
+            prop = parts[-1]
             if "ClockSpeed" in prop:
                 self.config.peripherals[p_type][i2c_name]["ClockSpeed"] = (
                     sanitize_numeric(value)
@@ -599,17 +616,21 @@ class I2CParser(PeripheralParser):
                 self.config.peripherals[p_type][i2c_name]["DualAddressMode"] = (
                         value == "ENABLE"
                 )
+            elif "Timing" in prop:
+                self.config.peripherals[p_type][i2c_name]["Timing"] = str(value)
 
     def _ensure_i2c_instance(self, p_type: str, i2c_name: str) -> None:
         """Initialize I2C instance if not exists."""
         if not self.config.peripherals[p_type].get(i2c_name):
             self.config.peripherals[p_type][i2c_name] = {
                 "ClockSpeed": None,
+                "Timing": None,
                 "DutyCycle": None,
                 "AddressingMode": "7-bit",
                 "DualAddressMode": False,
                 "NoStretchMode": False,
                 "DMA": {},
+                "Pins": {"SCL": None, "SDA": None},
             }
 
 
