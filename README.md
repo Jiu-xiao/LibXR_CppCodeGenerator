@@ -171,9 +171,6 @@ The chosen source becomes the submodule’s origin remote.
   自动生成的 C++ 驱动代码(如 `app_main.cpp`)  
   Generated C++ driver code (e.g. `app_main.cpp`)
 
-- 补丁后的中断处理函数(如 `stm32xx_it.c`)  
-  Patched interrupt handlers (e.g. `stm32xx_it.c`)
-
 - `CMakeLists.txt`、`.gitignore`  
 
 - 初始化的 Git 仓库及 LibXR 子模块  
@@ -312,53 +309,6 @@ sectors:
   size_kb: 1.0
   ...
 ```
-
----
-
-### `xr_stm32_it`
-
-批量修改 STM32 中断处理文件，插入 UART IDLE 回调。  
-Modifies STM32 interrupt handlers to add UART IDLE callback for LibXR.
-
-```bash
-usage: xr_stm32_it [-h] input_dir
-```
-
-#### 🔧 必选参数 (Required)
-
-- `input_dir`：
-
-  包含 `*_it.c` 文件的文件夹路径  
-  Directory containing the `*_it.c` source files.
-
-#### ⚙️ 功能说明 (Functionality)
-
-- 查找每个 `*_it.c` 文件中的 `HAL_UART_IRQHandler(&huartX)` 调用  
-  Find `HAL_UART_IRQHandler(&huartX)` calls in each `*_it.c` file
-
-- 向对应中断函数的 `/* USER CODE BEGIN XXX_IRQn 0/1 */` 区域插入：  
-  Add to the `/* USER CODE BEGIN XXX_IRQn 0/1 */` section of the corresponding interrupt function
-  
-```c
-  /* LibXR UART IDLE callback (Auto-generated) */
-#ifdef HAL_UART_MODULE_ENABLED
-  STM32_UART_ISR_Handler_IDLE(&huartX);
-#endif
-```
-
-- 若未定义 `STM32_UART_ISR_Handler_IDLE` 的 `extern` 声明，将插入至 `/* USER CODE BEGIN 0 */` 区域下  
-  Insert at `/* USER CODE BEGIN 0 */` if `STM32_UART_ISR_Handler_IDLE` is not defined
-
-- 支持多个 UART 接口  
-  Support for multiple UART interfaces
-
-#### 📦 输出内容 (Outputs)
-
-- 被修改的 `*_it.c` 文件  
-  Modified `*_it.c` files
-
-- 控制台输出修改摘要，包括修改的文件与函数名称  
-  Console output summary, including modified files and function names
 
 ---
 

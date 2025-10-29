@@ -225,12 +225,6 @@ def generate_cpp_code(yaml_output, cpp_output, xrobot_enable=False):
     run_command(cmd)
 
 
-def modify_stm32_interrupts(project_dir):
-    """Modify STM32 interrupt handler files."""
-    logging.info("Modifying STM32 interrupt files...")
-    run_command(f"xr_stm32_it {os.path.join(project_dir, 'Core/Src')}")
-
-
 def generate_cmake_file(project_dir):
     """Generate CMakeLists.txt for STM32 project with selected compiler."""
     run_command(f"xr_stm32_cmake {project_dir}")
@@ -314,9 +308,6 @@ def main():
 
     # Generate C++ code
     generate_cpp_code(yaml_output, cpp_output, xrobot_enable)
-
-    # Modify STM32 interrupt handlers
-    modify_stm32_interrupts(project_dir)
 
     # Generate CMakeLists.txt with selected compiler
     generate_cmake_file(project_dir)
