@@ -2,6 +2,7 @@
 """STM32CubeMX IOC Configuration Parser - Optimized Version"""
 
 import argparse
+import sys
 import os
 import re
 import logging
@@ -300,24 +301,37 @@ class ADCParser(PeripheralParser):
         self._deduplicate_channels()
 
     def _map_internal_channel(self, value: str) -> Optional[str]:
-        """Dynamic rule-based mapping for internal ADC channels."""
-        family = (self.config.mcu_config.get("Family") or "").upper()
+        """
+        Dynamic rule-based mapping for internal ADC channels found via VP_* signals.
 
-        if "Vref" in value:
+        Examples of 'value':
+          - 'ADC1_VrefInt'  -> ADC_CHANNEL_VREFINT
+          - 'ADC1_Vbat'     -> ADC_CHANNEL_VBAT
+          - 'ADC1_OPAMP1'   -> ADC_CHANNEL_VOPAMP1
+          - 'ADC1_TempSensor' (or contains TEMPSENSOR) -> ADC_CHANNEL_TEMPSENSOR
+        """
+        family = (self.config.mcu_config.get("Family") or "").upper()  # reserved for family-specific rules
+
+        v_upper = value.upper()
+        if "VREF" in v_upper:
             return "ADC_CHANNEL_VREFINT"
-
-        if "Vbat" in value:
+        if "VBAT" in v_upper:
             return "ADC_CHANNEL_VBAT"
-
-        if "OPAMP" in value:
-            match = re.search(r"OPAMP(\d+)", value)
-            if match:
-                opamp_num = match.group(1)
-                return f"ADC_CHANNEL_VOPAMP{opamp_num}"
+        # Temperature sensor mapping
+        if "TEMP" in v_upper or "TEMPSENSOR" in v_upper:
+            return "ADC_CHANNEL_TEMPSENSOR"
+        # OPAMPn mapping
+        m = re.search(r"OPAMP(\d+)", v_upper)
+        if m:
+            return f"ADC_CHANNEL_VOPAMP{m.group(1)}"
 
         return None
 
     def _parse_adc_property(self, key: str, value: str) -> None:
+        """
+        Parse single ADC property line and normalize DMA flag to string ("ENABLE"/"DISABLE").
+        Keeps ContinuousMode as boolean for existing usages.
+        """
         parts = key.split(".")
         if len(parts) < 2:
             return
@@ -326,16 +340,17 @@ class ADCParser(PeripheralParser):
         setting = parts[1]
         self._ensure_adc_instance(adc_name)
 
+        def _to_enable_str(v: str) -> str:
+            return "ENABLE" if str(v).strip().upper() == "ENABLE" else "DISABLE"
+
         if "ChannelRegularConversion" in setting:
             self._process_conversion_entry(adc_name, value)
         elif setting == "ContinuousConvMode":
-            self.config.peripherals["ADC"][adc_name]["ContinuousMode"] = (
-                    value == "ENABLE"
-            )
+            self.config.peripherals["ADC"][adc_name]["ContinuousMode"] = (value == "ENABLE")
         elif setting == "DMARegular":
-            self.config.peripherals["ADC"][adc_name]["DMA"] = value
+            self.config.peripherals["ADC"][adc_name]["DMA"] = _to_enable_str(value)
         elif setting == "DMAContinuousRequests":
-            self.config.peripherals["ADC"][adc_name]["DMA"] = value == "ENABLE"
+            self.config.peripherals["ADC"][adc_name]["DMA"] = _to_enable_str(value)
         elif setting == "EOCSelection":
             self.config.peripherals["ADC"][adc_name]["EOCSelection"] = value
 
@@ -344,6 +359,11 @@ class ADCParser(PeripheralParser):
         return list(adc_instances.keys())[0] if adc_instances else "ADC"
 
     def _parse_vp_adc_signal(self, key: str, value: str) -> None:
+        """
+        Handle VP_* virtual pins mapping internal signals to ADC channels.
+        Per requirement: channels discovered here are added to 'Channels' ONLY,
+        and NOT to 'RegularConversions'.
+        """
         if not value.startswith("ADC"):
             return
 
@@ -357,17 +377,16 @@ class ADCParser(PeripheralParser):
 
         mapped_channel = self._map_internal_channel(value)
         if mapped_channel:
+            # Only add to Channels (not RegularConversions)
             self._add_unique_entry(adc_name, "Channels", mapped_channel)
-            self._add_unique_entry(adc_name, "RegularConversions", mapped_channel)
 
     def _process_conversion_entry(self, adc_name: str, raw_value: str) -> None:
-        """Extract and validate ADC channel entries."""
-        # Split and process all comma-separated values
+        """Extract and validate ADC channel entries from ChannelRegularConversion."""
         for entry in raw_value.split(","):
             cleaned_entry = entry.strip()
-
             # Validate entry format using regex
             if self._is_valid_channel(cleaned_entry):
+                # Regular conversions explicitly configured go to both lists
                 self._add_unique_entry(adc_name, "Channels", cleaned_entry)
                 self._add_unique_entry(adc_name, "RegularConversions", cleaned_entry)
             elif cleaned_entry:
@@ -395,9 +414,7 @@ class ADCParser(PeripheralParser):
     def _deduplicate_channels(self) -> None:
         for adc_cfg in self.config.peripherals["ADC"].values():
             adc_cfg["Channels"] = list(dict.fromkeys(adc_cfg["Channels"]))
-            adc_cfg["RegularConversions"] = list(
-                dict.fromkeys(adc_cfg["RegularConversions"])
-            )
+            adc_cfg["RegularConversions"] = list(dict.fromkeys(adc_cfg["RegularConversions"]))
 
 
 # --------------------------
@@ -1223,12 +1240,12 @@ def main() -> None:
 
     if not os.path.isdir(args.directory):
         logging.error(f"Invalid input directory: {args.directory}")
-        exit(1)
+        sys.exit(1)
 
     ioc_files = [f for f in os.listdir(args.directory) if f.endswith(".ioc")]
     if not ioc_files:
         logging.error("No .ioc files found in target directory")
-        exit(1)
+        sys.exit(1)
 
     for ioc_file in ioc_files:
         input_path = os.path.join(args.directory, ioc_file)

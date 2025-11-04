@@ -230,6 +230,29 @@ def generate_cmake_file(project_dir):
     run_command(f"xr_stm32_cmake {project_dir}")
 
 
+def _friendly_path_name(path: str) -> str:
+    """
+    Return a human-friendly name for a path.
+    If path is '.', show the current folder name instead of '.'.
+    Falls back to absolute path for root-like cases.
+    """
+    abs_path = os.path.abspath(path)
+    base = os.path.basename(abs_path.rstrip(os.sep))
+    return base or abs_path
+
+
+def ensure_valid_cubemx_project(path: str):
+    """
+    Exit if `path` is not a typical STM32CubeMX project (must contain Core/).
+    Display a friendly name instead of '.' when logging.
+    """
+    display_name = _friendly_path_name(path)
+    core_dir = os.path.join(path, "Core")
+    if not os.path.isdir(core_dir):
+        logging.error(f"{display_name} is not a valid STM32CubeMX project: missing Core/ directory")
+        sys.exit(1)
+
+
 def main():
     from libxr.PackageInfo import LibXRPackageInfo
 
@@ -265,8 +288,11 @@ def main():
         logging.info(f"Locked LibXR commit: {libxr_commit}")
 
     if not os.path.isdir(project_dir):
-        logging.error(f"Directory {project_dir} does not exist")
-        exit(1)
+        logging.error(f"Directory {_friendly_path_name(project_dir)} does not exist")
+        sys.exit(1)
+
+    # Validate STM32CubeMX project structure (must have Core/ directory)
+    ensure_valid_cubemx_project(project_dir)
 
     # Select Git source (auto benchmarks default and mirrors)
     env_mirrors = os.environ.get("XR_GIT_MIRRORS", "")
@@ -290,7 +316,7 @@ def main():
     ioc_file = find_ioc_file(project_dir)
     if not ioc_file:
         logging.error("No .ioc file found")
-        exit(1)
+        sys.exit(1)
 
     logging.info(f"Found .ioc file: {ioc_file}")
 

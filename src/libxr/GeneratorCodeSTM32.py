@@ -305,7 +305,7 @@ DMA_DEFAULT_SIZES = {
     "SPI": {"tx": 32, "rx": 32},
     "USART": {"tx": 128, "rx": 128},
     "I2C": {"buffer": 32},
-    "ADC": {"buffer": 128}
+    "ADC": {"buffer": 32}
 }
 
 
@@ -381,7 +381,7 @@ def generate_dma_resources(project_data: dict) -> str:
         # I2C/ADC
         elif p_type_base in ["I2C", "ADC"]:
             for instance, config in instances.items():
-                dma_type = config.get("DMA_RX_TYPE", "DMA")  # Only RX DMA on some chips
+                dma_type = config.get("DMA_RX_TYPE", "DMA")  # type tag for section picking
                 instance_lower = instance.lower()
                 instance_config = libxr_settings[p_type_base].setdefault(instance_lower, {})
                 buf_size = instance_config.setdefault(
@@ -396,13 +396,19 @@ def generate_dma_resources(project_data: dict) -> str:
 
                 # ADC buffer is uint16_t, I2C is uint8_t
                 if p_type_base == "ADC":
-                    dma_code.append(
-                        f"static uint16_t {instance_lower}_buf[{int(buf_size / 2)}]{sec_str};"
+                    # 通道选择规则：DMA 开启→RegularConversions，否则→Channels
+                    active_channels = (
+                        config.get("RegularConversions", [])
+                        if config.get("DMA") == "ENABLE"
+                        else config.get("Channels", [])
                     )
+                    ch_cnt = max(1, len(active_channels))               # 至少保留 1 份缓冲
+                    elems_per_channel = max(1, int(buf_size // 2))      # 每通道的 uint16_t 元素数
+                    total_elems = ch_cnt * elems_per_channel            # 总元素数 = 通道数 × 每通道元素数
+                    dma_code.append(f"static uint16_t {instance_lower}_buf[{total_elems}]{sec_str};")
                 else:
-                    dma_code.append(
-                        f"static uint8_t {instance_lower}_buf[{buf_size}]{sec_str};"
-                    )
+                    dma_code.append(f"static uint8_t {instance_lower}_buf[{buf_size}]{sec_str};")
+
         elif p_type_base == "USB":
             # Generate buffer variables for each USB EP (controlled by dma_section)
             for instance, cfg in instances.items():
@@ -462,7 +468,6 @@ def generate_dma_resources(project_data: dict) -> str:
     else:
         output = "/* No DMA Resources generated. */"
     return output
-
 
 # --------------------------
 # Peripheral Generation
