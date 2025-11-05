@@ -295,32 +295,50 @@ class ADCParser(PeripheralParser):
         for key, value in self.raw_map.items():
             if key.startswith("ADC"):
                 self._parse_adc_property(key, value)
-            elif key.startswith("VP_") and key.endswith(".Signal"):
+        for key, value in self.raw_map.items():
+            if key.startswith("VP_") and key.endswith(".Signal"):
                 self._parse_vp_adc_signal(key, value)
-
         self._deduplicate_channels()
 
     def _map_internal_channel(self, value: str) -> Optional[str]:
         """
-        Dynamic rule-based mapping for internal ADC channels found via VP_* signals.
+        Map VP_* virtual-pin internal ADC signals to HAL channel macros WITHOUT binding to MCU family.
+        Preference order:
+        1) If CommonPathInternal lists a suffixed TempSensor macro (e.g., ADC_CHANNEL_TEMPSENSOR_ADC1),
+            use that.
+        2) Otherwise, if CommonPathInternal lists ADC_CHANNEL_TEMPSENSOR (no suffix), use that.
+        3) Otherwise, fall back to the generic ADC_CHANNEL_TEMPSENSOR.
 
-        Examples of 'value':
-          - 'ADC1_VrefInt'  -> ADC_CHANNEL_VREFINT
-          - 'ADC1_Vbat'     -> ADC_CHANNEL_VBAT
-          - 'ADC1_OPAMP1'   -> ADC_CHANNEL_VOPAMP1
-          - 'ADC1_TempSensor' (or contains TEMPSENSOR) -> ADC_CHANNEL_TEMPSENSOR
+        For VREF/VBAT we return the standard macros.
+        OPAMPn maps to ADC_CHANNEL_VOPAMPn.
         """
-        family = (self.config.mcu_config.get("Family") or "").upper()  # reserved for family-specific rules
-
         v_upper = value.upper()
+
+        # Try to derive the ADC instance from the VP_* value (e.g., "ADC1_TempSensor"),
+        # otherwise fall back to the first known ADC instance.        
+        m_adc = re.match(r"(ADC\d+)_", v_upper)
+        adc_name = (m_adc.group(1) if m_adc else self._get_adc_instance_name()).upper()
+
+        # Read CommonPathInternal (if present) captured during property parsing.
+        adc_cfg = self.config.peripherals.get("ADC", {}).get(adc_name, {})
+        cp_list = adc_cfg.get("CommonPathInternal", []) or []
+
+        # Direct maps
         if "VREF" in v_upper:
             return "ADC_CHANNEL_VREFINT"
         if "VBAT" in v_upper:
             return "ADC_CHANNEL_VBAT"
-        # Temperature sensor mapping
+
+        # TempSensor: prefer suffixed macros from CommonPathInternal, then generic
         if "TEMP" in v_upper or "TEMPSENSOR" in v_upper:
+            for tok in cp_list:
+                if re.match(r"ADC_CHANNEL_TEMPSENSOR_ADC\d+$", tok):
+                    return tok
+            if "ADC_CHANNEL_TEMPSENSOR" in cp_list:
+                return "ADC_CHANNEL_TEMPSENSOR"
             return "ADC_CHANNEL_TEMPSENSOR"
-        # OPAMPn mapping
+
+        # OPAMPn
         m = re.search(r"OPAMP(\d+)", v_upper)
         if m:
             return f"ADC_CHANNEL_VOPAMP{m.group(1)}"
@@ -329,8 +347,11 @@ class ADCParser(PeripheralParser):
 
     def _parse_adc_property(self, key: str, value: str) -> None:
         """
-        Parse single ADC property line and normalize DMA flag to string ("ENABLE"/"DISABLE").
-        Keeps ContinuousMode as boolean for existing usages.
+        Parse a single ADC property.
+        - Normalizes DMA flags to "ENABLE"/"DISABLE".
+        - Keeps ContinuousMode as boolean.
+        - Captures CommonPathInternal (e.g. "null|ADC_CHANNEL_TEMPSENSOR_ADC1|null|null")
+        so we can later choose the correct TempSensor macro without binding to MCU family.
         """
         parts = key.split(".")
         if len(parts) < 2:
@@ -353,6 +374,12 @@ class ADCParser(PeripheralParser):
             self.config.peripherals["ADC"][adc_name]["DMA"] = _to_enable_str(value)
         elif setting == "EOCSelection":
             self.config.peripherals["ADC"][adc_name]["EOCSelection"] = value
+        elif setting == "CommonPathInternal":
+            # Example string: "null|ADC_CHANNEL_TEMPSENSOR_ADC1|null|null"
+            raw = str(value)
+            tokens = [t.strip() for t in raw.split("|")]
+            tokens = [t.upper() for t in tokens if t and t.lower() != "null"]
+            self.config.peripherals["ADC"][adc_name]["CommonPathInternal"] = tokens
 
     def _get_adc_instance_name(self) -> str:
         adc_instances = self.config.peripherals.get("ADC", {})
@@ -412,9 +439,27 @@ class ADCParser(PeripheralParser):
             target_list.append(value)
 
     def _deduplicate_channels(self) -> None:
-        for adc_cfg in self.config.peripherals["ADC"].values():
-            adc_cfg["Channels"] = list(dict.fromkeys(adc_cfg["Channels"]))
-            adc_cfg["RegularConversions"] = list(dict.fromkeys(adc_cfg["RegularConversions"]))
+        """
+        Deduplicate and prefer suffixed TempSensor macros:
+        If both ADC_CHANNEL_TEMPSENSOR_ADCn and ADC_CHANNEL_TEMPSENSOR exist,
+        keep the suffixed variant(s) and drop the generic one.
+        """
+        for adc_name, adc_cfg in self.config.peripherals["ADC"].items():
+            # Basic dedupe
+            chs  = list(dict.fromkeys(adc_cfg.get("Channels", [])))
+            regs = list(dict.fromkeys(adc_cfg.get("RegularConversions", [])))
+
+            cp_list = adc_cfg.get("CommonPathInternal", []) or []
+            # Detect any suffixed TempSensor macro from any source
+            has_suffixed = any(re.match(r"ADC_CHANNEL_TEMPSENSOR_ADC\d+$", x)
+                            for x in (chs + regs + cp_list))
+
+            if has_suffixed:
+                chs  = [x for x in chs  if x != "ADC_CHANNEL_TEMPSENSOR"]
+                regs = [x for x in regs if x != "ADC_CHANNEL_TEMPSENSOR"]
+
+            adc_cfg["Channels"] = chs
+            adc_cfg["RegularConversions"] = regs
 
 
 # --------------------------
