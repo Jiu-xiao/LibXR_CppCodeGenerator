@@ -695,13 +695,31 @@ class PeripheralFactory:
         # DMA section name
         inst_cfg.setdefault("dma_section", cfg_in.get("dma_section", inst_cfg.get("dma_section", "")))
 
-        # Descriptor information
-        inst_cfg.setdefault("vid", _as_int(cfg_in.get("vid", inst_cfg.get("vid", 0x0483)), 0x0483))
-        inst_cfg.setdefault("pid", _as_int(cfg_in.get("pid", inst_cfg.get("pid", 0x5740)), 0x5740))
-        inst_cfg.setdefault("bcd", _as_int(cfg_in.get("bcd", inst_cfg.get("bcd", 0xf407)), 0xf407))
-        inst_cfg.setdefault("manufacturer", cfg_in.get("manufacturer", inst_cfg.get("manufacturer", "XRobot")))
-        inst_cfg.setdefault("product", cfg_in.get("product", inst_cfg.get("product", f"STM32 XRUSB {instance} CDC Demo")))
-        inst_cfg.setdefault("serial", cfg_in.get("serial", inst_cfg.get("serial", "123456789")))
+        # Descriptor information — 默认 16D0:1492 / 0x0100 / "XRUSB-DEMO-"
+        inst_cfg.setdefault(
+            "vid",
+            _as_int(cfg_in.get("vid", inst_cfg.get("vid", 0x16D0)), 0x16D0)
+        )
+        inst_cfg.setdefault(
+            "pid",
+            _as_int(cfg_in.get("pid", inst_cfg.get("pid", 0x1492)), 0x1492)
+        )
+        inst_cfg.setdefault(
+            "bcd",
+            _as_int(cfg_in.get("bcd", inst_cfg.get("bcd", 0x0100)), 0x0100)
+        )
+        inst_cfg.setdefault(
+            "manufacturer",
+            cfg_in.get("manufacturer", inst_cfg.get("manufacturer", "XRobot"))
+        )
+        inst_cfg.setdefault(
+            "product",
+            cfg_in.get("product", inst_cfg.get("product", f"STM32 XRUSB {instance} CDC Demo"))
+        )
+        inst_cfg.setdefault(
+            "serial",
+            cfg_in.get("serial", inst_cfg.get("serial", "XRUSB-DEMO-"))
+        )
 
         # Get the final value from settings for code generation
         ep0_sz = int(inst_cfg["ep0_packet_size"])
@@ -752,20 +770,22 @@ class PeripheralFactory:
             code.append(f"      USB::DeviceDescriptor::PacketSize0::{size_enum},")
             code.append(f"      0x{vid:X}, 0x{pid:X}, 0x{bcd:X},")
             code.append(f"      {{&{lang_var}}},")
-            code.append(f"      {{{{&{cdc_var}}}}}")
+            code.append(f"      {{{{&{cdc_var}}}}},")
+            code.append("      {reinterpret_cast<void *>(UID_BASE), 12}")
             code.append("  );")
         else:
             code.append(f"  {instance_type} {obj}(")
             code.append(f"      &{pcd_handle},")
             code.append("      {")
             code.append(f"          {{{inst_lower}_ep0_in_buf, {inst_lower}_ep0_out_buf, {ep0_sz}, {ep0_sz}}},")
-            code.append(f"          {{{inst_lower}_ep1_in_buf, {inst_lower}_ep1_out_buf, {tx_fifo_size}, {rx_fifo_size}}},")
+            code.append(f"          {{{inst_lower}_ep1_in_buf, {inst_lower}_ep1_out_buf, {tx_fifo_size}, {rx_buf_sz}}},")
             code.append(f"          {{{inst_lower}_ep2_in_buf, 16, true}}")
             code.append("      },")
             code.append(f"      USB::DeviceDescriptor::PacketSize0::{size_enum},")
             code.append(f"      0x{vid:X}, 0x{pid:X}, 0x{bcd:X},")
             code.append(f"      {{&{lang_var}}},")
-            code.append(f"      {{{{&{cdc_var}}}}}")
+            code.append(f"      {{{{&{cdc_var}}}}},")
+            code.append("      {reinterpret_cast<void *>(UID_BASE), 12}")
             code.append("  );")
 
         code.append(f"  {obj}.Init();")
@@ -1048,7 +1068,7 @@ def generate_xrobot_hardware_container() -> str:
             entry_list.append(f"  LibXR::Entry<LibXR::{dev_type}>({{{dev}, {{{alias_str}}}}})")  # With aliases
 
     entry_body = ",\n  ".join(entry_list)
-    return f"\n  LibXR::HardwareContainer peripherals{{\n  {entry_body}\n  }};\n"  # 只变量进f-string
+    return f"\n  LibXR::HardwareContainer peripherals{{\n  {entry_body}\n  }};\n"
 
 
 # --------------------------
