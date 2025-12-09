@@ -200,16 +200,22 @@ def load_libxr_config(output_dir: str, config_source: str) -> None:
 
     if config_source:
         try:
+            external_cfg = {}
             if config_source.startswith("http://") or config_source.startswith("https://"):
                 logging.info(f"Downloading libxr_config.yaml from {config_source}")
                 with urllib.request.urlopen(config_source) as response:
-                    libxr_settings.update(yaml.safe_load(response.read().decode()))
+                    external_cfg = yaml.safe_load(response.read().decode()) or {}
             elif os.path.exists(config_source):
                 logging.info(f"Using external libxr_config.yaml from {config_source}")
                 with open(config_source, "r", encoding="utf-8") as f:
-                    libxr_settings.update(yaml.safe_load(f))
+                    external_cfg = yaml.safe_load(f) or {}
             else:
                 logging.warning(f"Cannot locate config source: {config_source}")
+                return
+
+            external_cfg.pop("SYSTEM", None)
+
+            libxr_settings = _deep_merge(libxr_settings, external_cfg)
         except Exception as e:
             logging.warning(f"Failed to load external config: {e}")
         return
@@ -219,11 +225,11 @@ def load_libxr_config(output_dir: str, config_source: str) -> None:
             with open(config_path, "r", encoding="utf-8") as f:
                 saved_config = yaml.safe_load(f) or {}
 
-                # Version compatibility check
                 if saved_config.get("config_version", 1) > 1:
                     logging.warning("Config file format is newer than expected")
 
-                # Merge configurations
+                saved_config.pop("SYSTEM", None)
+
                 libxr_settings = _deep_merge(libxr_settings, saved_config)
         else:
             logging.info("Creating new library configuration file")

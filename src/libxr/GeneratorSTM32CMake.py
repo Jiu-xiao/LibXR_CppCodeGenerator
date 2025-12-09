@@ -3,6 +3,7 @@ import argparse
 import os
 import logging
 import shutil
+import re
 from pathlib import Path
 from typing import Union
 
@@ -71,6 +72,37 @@ endif()
 include_cmake_cmd = "include(${CMAKE_CURRENT_LIST_DIR}/cmake/LibXR.CMake)\n"
 
 
+def update_or_create_libxr_cmake(file_path: str, system: str) -> None:
+    cmake_path = Path(file_path)
+
+    if cmake_path.exists():
+        content = read_text_with_fallback(str(cmake_path))
+
+        pattern = re.compile(
+            r'(^\s*set\s*\(\s*LIBXR_SYSTEM\s+)(\S+)(\s*\)\s*)',
+            re.MULTILINE
+        )
+
+        if pattern.search(content):
+            new_content, count = pattern.subn(rf'\1{system}\3', content, count=1)
+            if count > 0 and new_content != content:
+                cmake_path.write_text(new_content, encoding="utf-8")
+                logging.info(f"Updated LIBXR_SYSTEM in existing LibXR.CMake to: {system}")
+            else:
+                logging.info("LIBXR_SYSTEM already up to date, no changes needed.")
+        else:
+            insertion = f"set(LIBXR_SYSTEM {system})\n"
+            new_content = insertion + content
+            cmake_path.write_text(new_content, encoding="utf-8")
+            logging.info(f"Inserted LIBXR_SYSTEM into existing LibXR.CMake: {system}")
+    else:
+        cmake_path.write_text(
+            LIBXR_CMAKE_TEMPLATE.replace("_LIBXR_SYSTEM_", system),
+            encoding="utf-8"
+        )
+        logging.info(f"Generated LibXR.CMake at: {cmake_path}")
+
+
 def clean_cmake_build_dirs(input_directory: Union[str, Path]) -> None:
     input_directory = Path(input_directory)
     removed = False
@@ -114,9 +146,6 @@ def main():
 
     file_path = os.path.join(cmake_dir, "LibXR.CMake")
 
-    if os.path.exists(file_path):
-        os.remove(file_path)
-
     freertos_enable = os.path.exists(os.path.join(input_directory, "Core", "Inc", "FreeRTOSConfig.h"))
     threadx_enable = os.path.exists(os.path.join(input_directory, "Core", "Inc", "app_threadx.h"))
 
@@ -127,10 +156,9 @@ def main():
     else:
         system = "None"
 
-    with open(file_path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(LIBXR_CMAKE_TEMPLATE.replace("_LIBXR_SYSTEM_", system))
-    logging.info(f"Generated LibXR.CMake at: {file_path}")
-    logging.info("LibXR.CMake generated successfully.")
+    update_or_create_libxr_cmake(file_path, system)
+    logging.info("LibXR.CMake generated/updated successfully.")
+
 
     main_cmake_path = os.path.join(input_directory, "CMakeLists.txt")
     if os.path.exists(main_cmake_path):
