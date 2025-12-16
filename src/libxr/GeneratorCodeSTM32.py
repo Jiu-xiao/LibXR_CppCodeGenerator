@@ -701,14 +701,15 @@ class PeripheralFactory:
         # DMA section name
         inst_cfg.setdefault("dma_section", cfg_in.get("dma_section", inst_cfg.get("dma_section", "")))
 
-        # Descriptor information — 默认 16D0:1492 / 0x0100 / "XRUSB-DEMO-"
+        # https://github.com/openmoko/openmoko-usb-oui/commit/27f3846d77e0d0d10271b809b831f70040c6197a
+        # Descriptor information — 默认 1d50:6199 / 0x0100 / "XRUSB-DEMO-"
         inst_cfg.setdefault(
             "vid",
-            _as_int(cfg_in.get("vid", inst_cfg.get("vid", 0x16D0)), 0x16D0)
+            _as_int(cfg_in.get("vid", inst_cfg.get("vid", 0x1d50)), 0x1d50)
         )
         inst_cfg.setdefault(
             "pid",
-            _as_int(cfg_in.get("pid", inst_cfg.get("pid", 0x1492)), 0x1492)
+            _as_int(cfg_in.get("pid", inst_cfg.get("pid", 0x6199)), 0x6199)
         )
         inst_cfg.setdefault(
             "bcd",
