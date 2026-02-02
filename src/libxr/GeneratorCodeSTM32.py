@@ -795,8 +795,8 @@ class PeripheralFactory:
             code.append("      {reinterpret_cast<void *>(UID_BASE), 12}")
             code.append("  );")
 
-        code.append(f"  {obj}.Init();")
-        code.append(f"  {obj}.Start();\n")
+        code.append(f"  {obj}.Init(false);")
+        code.append(f"  {obj}.Start(false);\n")
 
         _register_device(f"{cdc_var}", "UART")
         return "main", "\n".join(code)
