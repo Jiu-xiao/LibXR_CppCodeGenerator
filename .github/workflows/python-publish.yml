@@ -141,6 +141,10 @@ jobs:
             pip install $pkg.FullName
           }
 
+      - name: Import smoke check (all top-level modules)
+        run: |
+          python ./scripts/ci_import_smoke.py
+
       - name: Checkout BSP Compatibility Test Repo
         uses: actions/checkout@v4
         with:

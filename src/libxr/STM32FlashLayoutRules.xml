@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<flash-layout-rules version="1">
+  <rule name="stm32_f105_f107" regex="^STM32F10[57]">
+    <uniform size_kb="2" />
+  </rule>
+  <rule name="stm32_f1_small" prefix="STM32F1" flash_kb_max="128">
+    <uniform size_kb="1" />
+  </rule>
+  <rule name="stm32_f1_large" prefix="STM32F1" flash_kb_min="256">
+    <uniform size_kb="2" />
+  </rule>
+  <rule name="stm32_f2" prefix="STM32F2">
+    <banked bank_kb="1024" sizes_kb="16x4,64,128x7" />
+  </rule>
+  <rule name="stm32_f4" prefix="STM32F4">
+    <banked bank_kb="1024" sizes_kb="16x4,64,128x7" />
+  </rule>
+  <rule name="stm32_u5" prefix="STM32U5">
+    <uniform size_kb="8" />
+  </rule>
+  <rule name="stm32_u3" prefix="STM32U3">
+    <uniform size_kb="8" />
+  </rule>
+  <rule name="stm32_wl_l4_g0_g4_c0_u0" regex="^STM32(WL|L4|G0|G4|C0|U0)">
+    <uniform size_kb="2" />
+  </rule>
+  <rule name="stm32_l0" prefix="STM32L0">
+    <uniform size_bytes="128" />
+  </rule>
+  <rule name="stm32_wba" prefix="STM32WBA">
+    <uniform size_kb="8" />
+  </rule>
+  <rule name="stm32_wb" prefix="STM32WB">
+    <uniform size_kb="4" />
+  </rule>
+  <rule name="stm32_h7a3_b0_b3" regex="^STM32H7(A3|B0|B3)">
+    <uniform size_kb="8" />
+  </rule>
+  <rule name="stm32_h5" prefix="STM32H5">
+    <uniform size_kb="8" />
+  </rule>
+  <rule name="stm32_h7_die450_1m_dual_bank_gap" regex="^STM32H7(42|43|45|47)" flash_kb="1024">
+    <banked bank_kb="512" address_stride_kb="1024" sizes_kb="128x4" />
+  </rule>
+  <rule name="stm32_h7r_h7s" regex="^STM32H7(R3|R7|S3|S7)">
+    <uniform size_kb="8" />
+  </rule>
+  <rule name="stm32_h7" prefix="STM32H7">
+    <uniform size_kb="128" />
+  </rule>
+  <rule name="stm32_f7" prefix="STM32F7">
+    <sequence sizes_kb="32x4,128,256x7" />
+  </rule>
+  <rule name="stm32_f0_small_page" regex="^STM32F0[345]">
+    <uniform size_kb="1" />
+  </rule>
+  <rule name="stm32_f3" prefix="STM32F3">
+    <uniform size_kb="2" />
+  </rule>
+  <rule name="stm32_f0" prefix="STM32F0">
+    <uniform size_kb="2" />
+  </rule>
+  <rule name="stm32_l1" prefix="STM32L1">
+    <uniform size_bytes="256" />
+  </rule>
+  <rule name="stm32_default" prefix="STM32">
+    <uniform size_kb="1" />
+  </rule>
+</flash-layout-rules>
