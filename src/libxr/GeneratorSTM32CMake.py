@@ -10,7 +10,7 @@ from typing import Union
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 LIBXR_CMAKE_TEMPLATE = (
-'''set(CMAKE_CXX_STANDARD 17)
+'''set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # LibXR
@@ -20,6 +20,12 @@ set(XROBOT_MODULES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Modules)
 add_subdirectory(Middlewares/Third_Party/LibXR)
 target_link_libraries(xr
     PUBLIC stm32cubemx
+)
+target_compile_features(xr PUBLIC cxx_std_20)
+
+set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
 )
 
 target_include_directories(xr
@@ -72,29 +78,77 @@ endif()
 include_cmake_cmd = "include(${CMAKE_CURRENT_LIST_DIR}/cmake/LibXR.CMake)\n"
 
 
+def normalize_libxr_cmake(content: str, system: str) -> str:
+    content = re.sub(
+        r'^\s*set\s*\(\s*CMAKE_CXX_STANDARD\s+\d+\s*\)\s*\n?',
+        '',
+        content,
+        flags=re.MULTILINE
+    )
+    content = re.sub(
+        r'^\s*set\s*\(\s*CMAKE_CXX_STANDARD_REQUIRED\s+\S+\s*\)\s*\n?',
+        '',
+        content,
+        flags=re.MULTILINE
+    )
+    content = "set(CMAKE_CXX_STANDARD 20)\nset(CMAKE_CXX_STANDARD_REQUIRED ON)\n\n" + content.lstrip('\n')
+
+    system_pattern = re.compile(
+        r'(^\s*set\s*\(\s*LIBXR_SYSTEM\s+)(\S+)(\s*\)\s*)',
+        re.MULTILINE
+    )
+    if system_pattern.search(content):
+        content = system_pattern.sub(rf'\1{system}\3', content, count=1)
+    else:
+        content = re.sub(
+            r'(^\s*set\s*\(\s*LIBXR_DRIVER\s+\S+\s*\)\s*$)',
+            f"set(LIBXR_SYSTEM {system})\n\\1",
+            content,
+            count=1,
+            flags=re.MULTILINE
+        )
+
+    content = re.sub(
+        r'target_compile_features\s*\(\s*xr\s+PUBLIC\s+cxx_std_\d+\s*\)',
+        'target_compile_features(xr PUBLIC cxx_std_20)',
+        content,
+        count=1
+    )
+    if "target_compile_features(xr PUBLIC cxx_std_20)" not in content:
+        content = re.sub(
+            r'(target_link_libraries\s*\(\s*xr\b[\s\S]*?\)\s*)',
+            r'\1\ntarget_compile_features(xr PUBLIC cxx_std_20)\n',
+            content,
+            count=1
+        )
+
+    if "set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES" not in content:
+        content = re.sub(
+            r'(^\s*target_include_directories\(\$\{CMAKE_PROJECT_NAME\}\s+PRIVATE\s*$)',
+            "set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES\n"
+            "    CXX_STANDARD 20\n"
+            "    CXX_STANDARD_REQUIRED ON\n"
+            ")\n\n"
+            r'\1',
+            content,
+            count=1,
+            flags=re.MULTILINE
+        )
+
+    return content
+
+
 def update_or_create_libxr_cmake(file_path: str, system: str) -> None:
     cmake_path = Path(file_path)
 
     if cmake_path.exists():
         content = read_text_with_fallback(str(cmake_path))
-
-        pattern = re.compile(
-            r'(^\s*set\s*\(\s*LIBXR_SYSTEM\s+)(\S+)(\s*\)\s*)',
-            re.MULTILINE
-        )
-
-        if pattern.search(content):
-            new_content, count = pattern.subn(rf'\1{system}\3', content, count=1)
-            if count > 0 and new_content != content:
-                cmake_path.write_text(new_content, encoding="utf-8")
-                logging.info(f"Updated LIBXR_SYSTEM in existing LibXR.CMake to: {system}")
-            else:
-                logging.info("LIBXR_SYSTEM already up to date, no changes needed.")
-        else:
-            insertion = f"set(LIBXR_SYSTEM {system})\n"
-            new_content = insertion + content
+        new_content = normalize_libxr_cmake(content, system)
+        if new_content != content:
             cmake_path.write_text(new_content, encoding="utf-8")
-            logging.info(f"Inserted LIBXR_SYSTEM into existing LibXR.CMake: {system}")
+            logging.info(f"Updated existing LibXR.CMake for system: {system}")
+        else:
+            logging.info("LibXR.CMake already up to date, no changes needed.")
     else:
         cmake_path.write_text(
             LIBXR_CMAKE_TEMPLATE.replace("_LIBXR_SYSTEM_", system),
