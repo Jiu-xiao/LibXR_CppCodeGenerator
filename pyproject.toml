@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "libxr"
-version = "5.1.8"
+version = "5.1.9"
 description = "C++ code generator for LibXR-based embedded systems, supporting STM32 and modular robotics applications."
 requires-python = ">=3.8"
 authors = [
@@ -43,4 +43,4 @@ xr_cubemx_cfg = "libxr.ConfigCubemxProject:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"libxr" = ["libxr_version.py"]
+"libxr" = ["libxr_version.py", "STM32FlashLayoutRules.xml"]
