@@ -6,11 +6,13 @@ on:
       - "**.py"
       - "**.toml"
       - "**.yml"
+      - "**.xml"
   pull_request:
     paths:
       - "**.py"
       - "**.toml"
       - "**.yml"
+      - "**.xml"
   release:
     types:
       - published
