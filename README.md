@@ -126,10 +126,19 @@ Parses `.ioc`, generates YAML and C++ code, patches interrupt handlers, and init
   生成 XRobot Glue 代码  
   Enable XRobot glue code generation.
 
-- `--commit`
+- `--commit <COMMIT>`
   
-  指定 LibXR 仓库commit版本  
-  Specify the LibXR repository commit version
+  显式指定 LibXR 仓库 commit 版本；提供该参数时工具会切到这个 commit。
+  Explicitly select the LibXR repository commit; when provided, the tool checks out this commit.
+
+  不提供 `--commit` 时，工具优先保留工程已有的 LibXR 子模块版本。新 clone 工程会按工程记录的
+  submodule gitlink 初始化；如果该 gitlink 已经落后于包内默认 commit，当前 checkout 仍停在该 gitlink，
+  且子模块没有本地修改，工具会升级到包内默认 commit。已有子模块如果被用户切到非默认版本，不会被包内默认 commit 覆盖。
+  When `--commit` is omitted, the existing project LibXR submodule version is preserved. A freshly cloned
+  project follows its recorded submodule gitlink; if that gitlink is older than the package default commit,
+  the current checkout still stays at that gitlink, and the submodule is clean, the tool upgrades it to the
+  package default. An existing submodule manually moved away from the package default will not be overwritten
+  by code generation.
 
 - `--git-source`
 
