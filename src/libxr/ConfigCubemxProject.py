@@ -28,6 +28,19 @@ def is_git_repo(path):
         return False
 
 
+def is_git_worktree_root(path):
+    try:
+        result = subprocess.run(
+            ["git", "-C", path, "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return os.path.realpath(result.stdout.strip()) == os.path.realpath(path)
+    except subprocess.CalledProcessError:
+        return False
+
+
 def is_git_clean(path):
     """Check if the Git repo at `path` has no uncommitted changes."""
     result = subprocess.run(
@@ -36,16 +49,6 @@ def is_git_clean(path):
         text=True
     )
     return result.returncode == 0 and result.stdout.strip() == ""
-
-
-def get_current_branch(path):
-    """Get the current branch name of a Git repo at `path`."""
-    result = subprocess.run(
-        ["git", "-C", path, "rev-parse", "--abbrev-ref", "HEAD"],
-        capture_output=True,
-        text=True
-    )
-    return result.stdout.strip()
 
 
 def _fmt_cmd(cmd):
@@ -134,20 +137,59 @@ CMakeFiles/**
 """)
 
 
-def add_libxr(project_dir, libxr_commit=None, git_base="https://github.com"):
-    from pathlib import PurePosixPath
-    sub_rel_path_posix = str(PurePosixPath("Middlewares") / "Third_Party" / "LibXR")
+def get_git_head(path):
+    result = subprocess.run(
+        ["git", "-C", path, "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def get_submodule_gitlink(project_dir, rel_path):
+    result = subprocess.run(
+        ["git", "-C", project_dir, "ls-tree", "HEAD", "--", rel_path],
+        capture_output=True,
+        text=True
+    )
+    if result.returncode != 0:
+        return ""
+    parts = result.stdout.strip().split()
+    if len(parts) >= 3 and parts[0] == "160000" and parts[1] == "commit":
+        return parts[2]
+    return ""
+
+
+def is_commit_ancestor(repo_path, older_commit, newer_commit):
+    if not older_commit or not newer_commit:
+        return False
+    result = subprocess.run(
+        [
+            "git", "-C", repo_path, "merge-base", "--is-ancestor",
+            older_commit, newer_commit
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    return result.returncode == 0
+
+
+def add_libxr(project_dir, libxr_commit=None, git_base="https://github.com",
+              default_libxr_commit=None):
+    sub_rel_path_posix = "Middlewares/Third_Party/LibXR"
     libxr_path = os.path.join(project_dir, "Middlewares", "Third_Party", "LibXR")
 
     midware_path = os.path.join(project_dir, "Middlewares")
     third_party_path = os.path.join(midware_path, "Third_Party")
 
     def has_registered_submodule(repo_root, rel_path):
-        r = subprocess.run(
+        result = subprocess.run(
             ["git", "-C", repo_root, "submodule", "status", "--", rel_path],
             capture_output=True, text=True
         )
-        return (r.returncode == 0) and (r.stdout.strip() != "")
+        return (result.returncode == 0) and (result.stdout.strip() != "")
 
     if not os.path.exists(midware_path):
         logging.info("Creating Middleware folder...")
@@ -160,46 +202,76 @@ def add_libxr(project_dir, libxr_commit=None, git_base="https://github.com"):
         logging.warning(f"{project_dir} is not a Git repository. Initializing...")
         run_command(["git", "init", project_dir])
 
-    if has_registered_submodule(project_dir, sub_rel_path_posix):
-        run_command(["git", "-C", project_dir, "submodule", "sync", "--", sub_rel_path_posix], ignore_error=False)
+    registered = has_registered_submodule(project_dir, sub_rel_path_posix)
+    added_submodule = False
+
+    if registered:
         run_command(
-            ["git", "-C", project_dir, "submodule", "update", "--init", "--recursive", "--", sub_rel_path_posix],
+            ["git", "-C", project_dir, "submodule", "sync", "--", sub_rel_path_posix],
             ignore_error=False
         )
+        if not os.path.exists(libxr_path) or not is_git_worktree_root(libxr_path):
+            run_command(
+                [
+                    "git", "-C", project_dir, "submodule", "update",
+                    "--init", "--recursive", "--", sub_rel_path_posix
+                ],
+                ignore_error=False
+            )
+        else:
+            logging.info("LibXR submodule already exists; preserving current checkout.")
     else:
         logging.info("LibXR submodule not registered yet; skipping preemptive update.")
 
     repo_url = make_repo_url(git_base, "Jiu-Xiao", "libxr")
-    if not has_registered_submodule(project_dir, sub_rel_path_posix):
+    if not registered:
         logging.info(f"Adding LibXR as submodule from {repo_url} ...")
         run_command(
             ["git", "-C", project_dir, "submodule", "add", repo_url, sub_rel_path_posix]
         )
         logging.info("LibXR submodule added and initialized.")
+        added_submodule = True
     else:
         logging.info("LibXR submodule already registered.")
-        if not os.path.exists(libxr_path):
-            run_command(
-                ["git", "-C", project_dir, "submodule", "update", "--init", "--recursive", "--", sub_rel_path_posix]
-            )
 
     if os.path.exists(libxr_path):
         logging.info("LibXR submodule path exists.")
-        if is_git_clean(libxr_path):
-            logging.info("LibXR submodule is clean. Fetching latest changes...")
-            branch = get_current_branch(libxr_path)
+        current_commit = get_git_head(libxr_path)
+        project_commit = get_submodule_gitlink(project_dir, sub_rel_path_posix)
+        dirty = not is_git_clean(libxr_path)
+        fetched = False
+        target_commit = ""
+
+        if libxr_commit:
+            target_commit = libxr_commit
+            logging.info(f"Checking out LibXR to requested commit {target_commit}")
+        elif added_submodule and default_libxr_commit:
+            target_commit = default_libxr_commit
+            logging.info(f"Initializing new LibXR submodule to default commit {target_commit}")
+        elif dirty:
+            logging.warning("LibXR submodule has local changes; keeping current checkout.")
+        elif (project_commit and default_libxr_commit and project_commit != default_libxr_commit
+              and current_commit in (project_commit, default_libxr_commit)):
             run_command(["git", "-C", libxr_path, "fetch", "origin"], ignore_error=True)
-            if branch and branch != "HEAD":
-                run_command(["git", "-C", libxr_path, "checkout", branch], ignore_error=True)
-                run_command(["git", "-C", libxr_path, "pull", "origin", branch], ignore_error=True)
-            else:
-                logging.info("Submodule is in detached HEAD; skip branch-based pull.")
-            logging.info("LibXR submodule updated to latest remote version.")
-            if libxr_commit:
-                logging.info(f"Checking out LibXR to locked commit {libxr_commit}")
-                run_command(["git", "-C", libxr_path, "checkout", libxr_commit])
-        else:
-            logging.warning("LibXR submodule has local changes. Skipping update.")
+            fetched = True
+
+            if current_commit == project_commit and is_commit_ancestor(
+                libxr_path, project_commit, default_libxr_commit
+            ):
+                target_commit = default_libxr_commit
+                logging.info(f"Updating LibXR from older project commit to default {target_commit}")
+            elif current_commit == default_libxr_commit and not is_commit_ancestor(
+                libxr_path, project_commit, default_libxr_commit
+            ):
+                target_commit = project_commit
+                logging.info(f"Restoring LibXR to project submodule commit {target_commit}")
+
+        if target_commit:
+            if not fetched:
+                run_command(["git", "-C", libxr_path, "fetch", "origin"], ignore_error=True)
+            run_command(["git", "-C", libxr_path, "checkout", target_commit])
+        elif not dirty:
+            logging.info("No LibXR commit requested; keeping existing submodule checkout.")
 
 
 def create_user_directory(project_dir):
@@ -275,17 +347,20 @@ def main():
     xrobot_enable = bool(args.xrobot)
 
     libxr_commit = args.commit.strip()
+    default_libxr_commit = ""
     if not libxr_commit:
         try:
             sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "src")))
             from libxr.libxr_version import LibXRInfo
-            libxr_commit = LibXRInfo.COMMIT
+            default_libxr_commit = LibXRInfo.COMMIT
         except Exception as e:
             logging.info(f"No lock commit found in src/libxr/libxr_version.py: {e}")
-            libxr_commit = ""
+            default_libxr_commit = ""
 
-    if (libxr_commit):
-        logging.info(f"Locked LibXR commit: {libxr_commit}")
+    if libxr_commit:
+        logging.info(f"Requested LibXR commit: {libxr_commit}")
+    elif default_libxr_commit:
+        logging.info(f"Default LibXR commit: {default_libxr_commit}")
 
     if not os.path.isdir(project_dir):
         logging.error(f"Directory {_friendly_path_name(project_dir)} does not exist")
@@ -310,7 +385,12 @@ def main():
     logging.info(f"Selected Git base/repo: {git_base}")
 
     # Add Git submodule if necessary
-    add_libxr(project_dir, libxr_commit if libxr_commit else None, git_base=git_base)
+    add_libxr(
+        project_dir,
+        libxr_commit if libxr_commit else None,
+        git_base=git_base,
+        default_libxr_commit=default_libxr_commit if default_libxr_commit else None
+    )
 
     # Find .ioc file
     ioc_file = find_ioc_file(project_dir)
