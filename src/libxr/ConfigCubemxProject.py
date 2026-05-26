@@ -4,6 +4,7 @@ import logging
 import os
 import subprocess
 import shlex
+import shutil
 import sys
 
 import argparse
@@ -39,6 +40,21 @@ def is_git_worktree_root(path):
         return os.path.realpath(result.stdout.strip()) == os.path.realpath(path)
     except subprocess.CalledProcessError:
         return False
+
+
+def get_git_dir(path):
+    result = subprocess.run(
+        ["git", "-C", path, "rev-parse", "--git-dir"],
+        capture_output=True,
+        text=True
+    )
+    if result.returncode != 0:
+        logging.warning(f"Failed to resolve git dir for {path}: {result.stderr.strip()}")
+        return ""
+    git_dir = result.stdout.strip()
+    if not os.path.isabs(git_dir):
+        git_dir = os.path.normpath(os.path.join(path, git_dir))
+    return git_dir
 
 
 def is_git_clean(path):
@@ -176,6 +192,32 @@ def is_commit_ancestor(repo_path, older_commit, newer_commit):
     return result.returncode == 0
 
 
+def remove_path(path):
+    if os.path.islink(path) or os.path.isfile(path):
+        os.remove(path)
+    elif os.path.isdir(path):
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def repair_submodule_checkout(project_dir, rel_path, checkout_path):
+    logging.warning("LibXR submodule checkout is invalid; recreating it from registered metadata.")
+    run_command(
+        ["git", "-C", project_dir, "submodule", "deinit", "-f", "--", rel_path],
+        ignore_error=True
+    )
+
+    git_dir = get_git_dir(project_dir)
+    if git_dir:
+        module_git_dir = os.path.join(git_dir, "modules", *rel_path.split("/"))
+        if os.path.exists(module_git_dir):
+            logging.info(f"Removing stale LibXR submodule gitdir: {module_git_dir}")
+            remove_path(module_git_dir)
+
+    if os.path.exists(checkout_path) or os.path.islink(checkout_path):
+        logging.info(f"Removing stale LibXR submodule worktree: {checkout_path}")
+        remove_path(checkout_path)
+
+
 def add_libxr(project_dir, libxr_commit=None, git_base="https://github.com",
               default_libxr_commit=None):
     sub_rel_path_posix = "Middlewares/Third_Party/LibXR"
@@ -185,11 +227,33 @@ def add_libxr(project_dir, libxr_commit=None, git_base="https://github.com",
     third_party_path = os.path.join(midware_path, "Third_Party")
 
     def has_registered_submodule(repo_root, rel_path):
+        if os.path.exists(os.path.join(repo_root, ".gitmodules")):
+            result = subprocess.run(
+                [
+                    "git", "-C", repo_root, "config", "-f", ".gitmodules",
+                    "--get-regexp", r"^submodule\..*\.path$"
+                ],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    parts = line.split(None, 1)
+                    if len(parts) == 2 and parts[1].strip() == rel_path:
+                        return True
+
         result = subprocess.run(
-            ["git", "-C", repo_root, "submodule", "status", "--", rel_path],
+            ["git", "-C", repo_root, "ls-files", "--stage", "--", rel_path],
             capture_output=True, text=True
         )
-        return (result.returncode == 0) and (result.stdout.strip() != "")
+        if result.returncode != 0:
+            return False
+
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 4 and parts[0] == "160000":
+                return True
+        return False
 
     if not os.path.exists(midware_path):
         logging.info("Creating Middleware folder...")
@@ -203,14 +267,24 @@ def add_libxr(project_dir, libxr_commit=None, git_base="https://github.com",
         run_command(["git", "init", project_dir])
 
     registered = has_registered_submodule(project_dir, sub_rel_path_posix)
+    checkout_path_present = os.path.lexists(libxr_path)
+    existing_checkout = checkout_path_present and is_git_worktree_root(libxr_path)
     added_submodule = False
 
     if registered:
-        run_command(
-            ["git", "-C", project_dir, "submodule", "sync", "--", sub_rel_path_posix],
-            ignore_error=False
-        )
-        if not os.path.exists(libxr_path) or not is_git_worktree_root(libxr_path):
+        if existing_checkout:
+            run_command(
+                ["git", "-C", project_dir, "submodule", "sync", "--", sub_rel_path_posix],
+                ignore_error=False
+            )
+            logging.info("LibXR submodule already exists; preserving current checkout.")
+        else:
+            if checkout_path_present:
+                repair_submodule_checkout(project_dir, sub_rel_path_posix, libxr_path)
+            run_command(
+                ["git", "-C", project_dir, "submodule", "sync", "--", sub_rel_path_posix],
+                ignore_error=False
+            )
             run_command(
                 [
                     "git", "-C", project_dir, "submodule", "update",
@@ -218,8 +292,6 @@ def add_libxr(project_dir, libxr_commit=None, git_base="https://github.com",
                 ],
                 ignore_error=False
             )
-        else:
-            logging.info("LibXR submodule already exists; preserving current checkout.")
     else:
         logging.info("LibXR submodule not registered yet; skipping preemptive update.")
 
