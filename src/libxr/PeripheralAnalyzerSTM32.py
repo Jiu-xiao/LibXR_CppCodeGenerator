@@ -42,6 +42,7 @@ class ConfigurationManager:
     """Centralized storage and processing of parsed configuration data."""
 
     def __init__(self) -> None:
+        self.pin_registry: DefaultDict[str, Dict[str, Any]] = defaultdict(dict)
         self.gpio_pins: DefaultDict[str, Dict[str, Any]] = defaultdict(dict)
         self.peripherals: DefaultDict[str, DefaultDict[str, Dict]] = defaultdict(
             lambda: defaultdict(dict)
@@ -90,8 +91,12 @@ class ConfigurationManager:
 
     def _clean_gpio(self) -> Dict[str, Dict]:
         return {
-            pin: config
-            for pin, config in self.gpio_pins.items()
+            pin: {
+                k: v
+                for k, v in config.items()
+                if k in {"Signal", "Label", "Pull", "GPXTI"}
+            }
+            for pin, config in self.pin_registry.items()
             if self._is_valid_gpio(config)
         }
 
@@ -150,19 +155,61 @@ class PeripheralParser:
             config: ConfigurationManager,
             raw_map: Dict[str, str],
             gpio_pattern: Pattern = re.compile(
-                r"^(P[A-K]\d+(?:-[\w]+)*)(?:\\?\s*\([^)]+\))?\.(Signal|GPIO_Label|GPIO_PuPd)$"
+                r"^(P[A-K]\d+(?:[_/-][\w]+)*)(?:\\?\s*\([^)]+\))?\.(Signal|GPIO_Label|GPIO_PuPd)$"
             ),
     ) -> None:
         self.config = config
         self.raw_map = raw_map
         self.gpio_pattern = gpio_pattern
 
+    @staticmethod
+    def _normalize_gpio_pin_token(pin: str) -> str:
+        """Normalize CubeMX GPIO pin tokens to the physical PxN form."""
+        match = re.match(r"^(P[A-K]\d+)", pin)
+        return match.group(1) if match else pin
+
+    @staticmethod
+    def _normalize_ioc_key_pin(key: str) -> str:
+        """Extract and normalize the pin token from an IOC property key."""
+        return PeripheralParser._normalize_gpio_pin_token(key.split(".")[0])
+
+    @staticmethod
+    def _signal_root(signal: str) -> str:
+        """Return the peripheral root from a CubeMX signal token.
+
+        Examples:
+        - ``USART1_TX`` -> ``USART1``
+        - ``I2C2_SCL`` -> ``I2C2``
+        - ``TIM1_CH1N`` -> ``TIM1``
+        """
+        signal = str(signal).strip()
+        match = re.match(
+            r"^((?:USART|LPUART|UART|I2C|SPI|TIM|LPTIM|HRTIM|ADC|DAC|FDCAN|CAN|USB)\d*)",
+            signal.upper(),
+        )
+        return match.group(1) if match else signal.split("_")[0]
+
+    @staticmethod
+    def _signal_suffix(signal: str) -> str:
+        """Return the last underscore-separated suffix from a CubeMX signal token."""
+        signal = str(signal).strip()
+        return signal.split("_")[-1].upper() if "_" in signal else signal.upper()
+
+    @staticmethod
+    def _parse_dma_request_endpoint(peripheral_full: str) -> Tuple[str, str]:
+        """Split a DMA request target like ``USART1_TX`` into peripheral and direction."""
+        endpoint = str(peripheral_full).strip()
+        match = re.match(r"^(.*)_([A-Z]+)$", endpoint)
+        if not match:
+            return endpoint, "general"
+        return match.group(1), match.group(2).lower()
+
     def parse_gpio(self) -> None:
         """Common GPIO parsing logic."""
         for key, value in self.raw_map.items():
             if match := self.gpio_pattern.match(key):
                 pin, prop = match.groups()
-                self._process_gpio_property(pin, prop, value)
+                self._process_gpio_property(self._normalize_gpio_pin_token(pin), prop, value)
 
     def _process_gpio_property(self, pin: str, prop: str, value: str) -> None:
         """Handle individual GPIO property."""
@@ -172,9 +219,9 @@ class PeripheralParser:
             "GPIO_PuPd": ("Pull", value),
         }
         field, val = prop_map[prop]
-        self.config.gpio_pins[pin][field] = val
+        self.config.pin_registry[pin][field] = val
         if "GPXTI" in value:
-            self.config.gpio_pins[pin]["GPXTI"] = True
+            self.config.pin_registry[pin]["GPXTI"] = True
 
     def parse(self, p_type: str) -> None:
         """Template method to be implemented by subclasses."""
@@ -221,7 +268,7 @@ class TIMParser(PeripheralParser):
                 if re.match(r"^TIM_CHANNEL_\d+$", channel_id):
                     ch_num = channel_id.split("_")[-1]
                     ch_name = f"CH{ch_num}"
-                    label, is_n = self._get_associated_pin_label(tim_name)
+                    label, is_n = self._get_associated_pin_label(tim_name, ch_name)
                     self.config.peripherals["TIM"][tim_name]["Channels"][ch_name] = {
                         "Label": label,
                         "PWM": True,
@@ -262,7 +309,7 @@ class TIMParser(PeripheralParser):
 
         channel_id = match.group(1)
         is_n = channel_id.endswith("N")
-        pin_label, _ = self._get_associated_pin_label(parts[0])
+        pin_label, _ = self._get_associated_pin_label(tim_name, channel_id)
 
         self.config.peripherals["TIM"][tim_name]["Channels"][channel_id] = {
             "Label": pin_label,
@@ -271,13 +318,27 @@ class TIMParser(PeripheralParser):
             "DutyCycle": sanitize_numeric(value) if value.isdigit() else None,
         }
 
-    def _get_associated_pin_label(self, timer_pin: str) -> Tuple[str, bool]:
+    def _get_associated_pin_label(self, timer_name: str, channel_id: str) -> Tuple[str, bool]:
         """
         Retrieve GPIO label and whether it's a complementary (N) output.
         Return: (label, is_complementary)
         """
-        config = self.config.gpio_pins.get(timer_pin, {})
-        label = config.get("Label", timer_pin)
+        normalized_channel = channel_id.upper()
+        signal_candidates = {f"{timer_name}_{normalized_channel}"}
+        if normalized_channel == 'CH1':
+            signal_candidates.add(f"{timer_name}_CH1_ETR")
+
+        config = {}
+        matched_pin = timer_name
+        for pin_name, pin_cfg in self.config.pin_registry.items():
+            signal = str(pin_cfg.get("Signal", ""))
+            normalized_signal = signal[2:] if signal.startswith("S_") else signal
+            if normalized_signal in signal_candidates:
+                config = pin_cfg
+                matched_pin = pin_name
+                break
+
+        label = config.get("Label", matched_pin)
         signal = config.get("Signal", "")
         is_complementary = signal.endswith("N")  # e.g., TIM1_CH1N
         return label, is_complementary
@@ -599,10 +660,10 @@ class USARTParser(PeripheralParser):
                     self._handle_operation_mode(p_type, uart_name, value)
 
         # Second pass: infer missing UART instances based on GPIO signals
-        for pin_name, gpio_cfg in self.config.gpio_pins.items():
-            signal = gpio_cfg.get("Signal", "")
+        for pin_name, pin_cfg in self.config.pin_registry.items():
+            signal = pin_cfg.get("Signal", "")
             if "_TX" in signal or "_RX" in signal:
-                uart_root = signal.split("_")[0]  # e.g., LPUART1
+                uart_root = self._signal_root(signal)
                 if (
                         uart_root.startswith(("USART", "UART", "LPUART"))
                         and uart_root not in found_instances
@@ -648,14 +709,17 @@ class I2CParser(PeripheralParser):
                 continue
 
             if key.endswith(".Signal") and "I2C" in str(value):
-                portpin = key.split(".")[0]
+                portpin = self._normalize_ioc_key_pin(key)
                 per_sig = str(value)
-                i2c_name = per_sig.split("_")[0]
+                i2c_name = self._signal_root(per_sig)
                 self._ensure_i2c_instance(p_type, i2c_name)
                 cfg = self.config.peripherals[p_type][i2c_name]
                 pins = cfg.setdefault("Pins", {"SCL": None, "SDA": None})
-                if per_sig.endswith("_SCL"): pins["SCL"] = portpin
-                if per_sig.endswith("_SDA"): pins["SDA"] = portpin
+                suffix = self._signal_suffix(per_sig)
+                if suffix == "SCL":
+                    pins["SCL"] = portpin
+                if suffix == "SDA":
+                    pins["SDA"] = portpin
                 continue
 
             if not key.startswith("I2C"):
@@ -951,13 +1015,7 @@ class DMAParser(PeripheralParser):
         for config_key, cfg in self.config.dma_configs.items():
             peripheral_full = cfg["peripheral"]
             dma_type = cfg.get("dma_type", "DMA")
-            if "_" in peripheral_full:
-                # Split peripheral and direction (e.g., "USART1_TX")
-                p_name, direction = peripheral_full.rsplit("_", 1)
-                direction = direction.lower()
-            else:
-                p_name = peripheral_full
-                direction = "general"
+            p_name, direction = self._parse_dma_request_endpoint(peripheral_full)
             # Search for the peripheral in all possible types
             for p_type in ["SPI", "I2C", "USART", "LPUART", "ADC", "TIM"]:
                 if p_name in self.config.peripherals.get(p_type, {}):
@@ -1170,12 +1228,8 @@ def _extract_key_value_pairs(file_handler: TextIO) -> Dict[str, str]:
 def _link_dma_requests(config: ConfigurationManager) -> None:
     """Associate DMA requests with corresponding peripherals."""
     for req_id, peripheral in config.dma_requests.items():
-        if "_" in peripheral:
-            p_name, direction = peripheral.rsplit("_", 1)
-            direction_key = f"DMA_{direction}"
-        else:
-            p_name = peripheral
-            direction_key = "DMA"
+        p_name, direction = PeripheralParser._parse_dma_request_endpoint(peripheral)
+        direction_key = f"DMA_{direction}" if direction != "general" else "DMA"
 
         for p_type in ["USART", "SPI", "ADC", "I2C"]:
             if p_name in config.peripherals[p_type]:
