@@ -435,6 +435,18 @@ def main():
                         help="Pass -s to STM32CubeMX during --cubemx-generate")
     parser.add_argument("--cubemx-auto-confirm", action="store_true",
                         help="Attempt to auto-confirm migration/license/download dialogs during CubeMX generation")
+    parser.add_argument("--cubemx-restore-ci-state", action="store_true",
+                        help="Restore pre-warmed CubeMX CI state/cache before launching CubeMX")
+    parser.add_argument("--cubemx-ci-state-archive", default="",
+                        help="Path to a tar/zip archive containing pre-warmed CubeMX state/cache")
+    parser.add_argument("--cubemx-ci-state-b64-env", default="STM32CUBEMX_CI_STATE_B64",
+                        help="Environment variable containing base64-encoded CubeMX state/cache archive")
+    parser.add_argument("--cubemx-allow-st-login", action="store_true",
+                        help="Allow explicit ST account login via environment variables when login dialogs appear")
+    parser.add_argument("--cubemx-st-username-env", default="STM32CUBEMX_USERNAME",
+                        help="Environment variable containing the ST account username")
+    parser.add_argument("--cubemx-st-password-env", default="STM32CUBEMX_PASSWORD",
+                        help="Environment variable containing the ST account password")
     parser.add_argument("--cubemx-timeout", type=int, default=1200,
                         help="CubeMX generation timeout in seconds (default: 1200)")
 
@@ -513,6 +525,12 @@ def main():
             keep_script=args.cubemx_keep_script,
             silent=args.cubemx_silent,
             auto_confirm=args.cubemx_auto_confirm,
+            restore_ci_state=args.cubemx_restore_ci_state,
+            ci_state_archive=args.cubemx_ci_state_archive,
+            ci_state_b64_env=args.cubemx_ci_state_b64_env,
+            allow_st_login=args.cubemx_allow_st_login,
+            st_username_env=args.cubemx_st_username_env,
+            st_password_env=args.cubemx_st_password_env,
             timeout=args.cubemx_timeout,
         )
 

@@ -148,6 +148,8 @@ jobs:
           python ./scripts/ci_import_smoke.py
 
       - name: CubeMX runner smoke check
+        env:
+          STM32CUBEMX_CI_STATE_B64: ${{ secrets.STM32CUBEMX_CI_STATE_B64 }}
         run: |
           python ./scripts/cubemx_runner_smoke.py
 
