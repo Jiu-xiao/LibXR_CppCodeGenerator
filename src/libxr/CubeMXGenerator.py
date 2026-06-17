@@ -1267,7 +1267,9 @@ def generate_cubemx_project(
             stream.close()
 
     try:
-        process = subprocess.Popen(
+        # CubeMX path is resolved before this point and arguments are passed as
+        # a list with shell disabled, so project paths cannot be shell-expanded.
+        process = subprocess.Popen(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
             command,
             cwd=project_dir,
             stdout=subprocess.PIPE,
@@ -1275,6 +1277,7 @@ def generate_cubemx_project(
             text=True,
             errors="replace",
             bufsize=1,
+            shell=False,
         )
     except Exception:
         if stdout_handle is not None:
