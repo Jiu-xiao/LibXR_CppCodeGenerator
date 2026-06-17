@@ -77,6 +77,25 @@ endif()
 
 include_cmake_cmd = "include(${CMAKE_CURRENT_LIST_DIR}/cmake/LibXR.CMake)\n"
 
+CLANG_PICOLIBC_LINK_OPTIONS = (
+'''if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND DEFINED STARM_TOOLCHAIN_CONFIG AND STARM_TOOLCHAIN_CONFIG STREQUAL "STARM_PICOLIBC")
+    target_link_options(${CMAKE_PROJECT_NAME} PRIVATE "LINKER:-z,nostart-stop-gc")
+endif()
+'''
+)
+
+
+def ensure_clang_picolibc_link_options(content: str) -> str:
+    if "nostart-stop-gc" in content:
+        return content
+
+    return re.sub(
+        r'(target_link_libraries\s*\(\s*\$\{CMAKE_PROJECT_NAME\}[\s\S]*?\)\s*)',
+        r'\1\n' + CLANG_PICOLIBC_LINK_OPTIONS + '\n',
+        content,
+        count=1,
+    )
+
 
 def normalize_libxr_cmake(content: str, system: str) -> str:
     content = re.sub(
@@ -135,6 +154,8 @@ def normalize_libxr_cmake(content: str, system: str) -> str:
             flags=re.MULTILINE
         )
 
+    content = ensure_clang_picolibc_link_options(content)
+
     return content
 
 
@@ -150,10 +171,10 @@ def update_or_create_libxr_cmake(file_path: str, system: str) -> None:
         else:
             logging.info("LibXR.CMake already up to date, no changes needed.")
     else:
-        cmake_path.write_text(
-            LIBXR_CMAKE_TEMPLATE.replace("_LIBXR_SYSTEM_", system),
-            encoding="utf-8"
+        content = ensure_clang_picolibc_link_options(
+            LIBXR_CMAKE_TEMPLATE.replace("_LIBXR_SYSTEM_", system)
         )
+        cmake_path.write_text(content, encoding="utf-8")
         logging.info(f"Generated LibXR.CMake at: {cmake_path}")
 
 
