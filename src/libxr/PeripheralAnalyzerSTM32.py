@@ -150,17 +150,65 @@ class ConfigurationManager:
 class PeripheralParser:
     """Abstract base class for peripheral-specific parsers."""
 
+    _PIN_PROPERTY_PATTERN = re.compile(
+        r"^((?:P[A-K]\d+)[^.]*)\.(Signal|GPIO_Label|GPIO_PuPd)$"
+    )
+    _PERIPHERAL_ROOT_PATTERN = re.compile(
+        r"^((?:USART|LPUART|UART|I2C|SPI|TIM|LPTIM|HRTIM|ADC|DAC|FDCAN|CAN|USB)\d*)"
+    )
+
     def __init__(
             self,
             config: ConfigurationManager,
             raw_map: Dict[str, str],
-            gpio_pattern: Pattern = re.compile(
-                r"^(P[A-K]\d+(?:[_/-][\w]+)*)(?:\\?\s*\([^)]+\))?\.(Signal|GPIO_Label|GPIO_PuPd)$"
-            ),
+            gpio_pattern: Pattern = _PIN_PROPERTY_PATTERN,
     ) -> None:
         self.config = config
         self.raw_map = raw_map
         self.gpio_pattern = gpio_pattern
+
+    @staticmethod
+    def _split_ioc_key(key: str) -> List[str]:
+        """Split an IOC property key while preserving each CubeMX token verbatim."""
+        return str(key).split(".")
+
+    @staticmethod
+    def _ioc_key_root(key: str) -> str:
+        """Return the first token of an IOC property key."""
+        return PeripheralParser._split_ioc_key(key)[0]
+
+    @staticmethod
+    def _ioc_key_prop(key: str, default: Optional[str] = None) -> Optional[str]:
+        """Return the second token of an IOC property key, if it exists."""
+        parts = PeripheralParser._split_ioc_key(key)
+        return parts[1] if len(parts) > 1 else default
+
+    @staticmethod
+    def _has_ioc_prefix(key: str, prefix: str) -> bool:
+        """Match an IOC key prefix on a token boundary, not just by text prefix."""
+        key = str(key)
+        return key == prefix or key.startswith(f"{prefix}.")
+
+    @staticmethod
+    def _ioc_root_startswith(key: str, stem: str) -> bool:
+        """Match CubeMX keys whose first dot-separated token starts with a stem."""
+        return PeripheralParser._ioc_key_root(key).startswith(stem)
+
+    @staticmethod
+    def _ioc_key_startswith(key: str, stem: str) -> bool:
+        """Match CubeMX numbered keys such as ``Mcu.IP0`` and ``Mcu.IPNb``."""
+        return str(key).startswith(stem)
+
+    @staticmethod
+    def _dma_request_id(key: str, prefix: str) -> Optional[str]:
+        """Return the DMA request id from ``Dma.RequestN`` / ``Bdma.RequestN`` keys."""
+        match = re.fullmatch(rf"{re.escape(prefix)}\.Request(\d+)", str(key))
+        return match.group(1) if match else None
+
+    @staticmethod
+    def _dma_request_key(prefix: str, req_id: str) -> str:
+        """Build a collision-free DMA request key for mixed DMA/BDMA projects."""
+        return f"{prefix}.Request{req_id}"
 
     @staticmethod
     def _normalize_gpio_pin_token(pin: str) -> str:
@@ -171,7 +219,15 @@ class PeripheralParser:
     @staticmethod
     def _normalize_ioc_key_pin(key: str) -> str:
         """Extract and normalize the pin token from an IOC property key."""
-        return PeripheralParser._normalize_gpio_pin_token(key.split(".")[0])
+        return PeripheralParser._normalize_gpio_pin_token(
+            PeripheralParser._ioc_key_root(key)
+        )
+
+    @staticmethod
+    def _normalize_signal_token(signal: str) -> str:
+        """Normalize CubeMX signal aliases before deriving peripheral names."""
+        signal = str(signal).strip().upper()
+        return signal[2:] if signal.startswith("S_") else signal
 
     @staticmethod
     def _signal_root(signal: str) -> str:
@@ -182,27 +238,32 @@ class PeripheralParser:
         - ``I2C2_SCL`` -> ``I2C2``
         - ``TIM1_CH1N`` -> ``TIM1``
         """
-        signal = str(signal).strip()
-        match = re.match(
-            r"^((?:USART|LPUART|UART|I2C|SPI|TIM|LPTIM|HRTIM|ADC|DAC|FDCAN|CAN|USB)\d*)",
-            signal.upper(),
-        )
+        signal = PeripheralParser._normalize_signal_token(signal)
+        match = PeripheralParser._PERIPHERAL_ROOT_PATTERN.match(signal)
         return match.group(1) if match else signal.split("_")[0]
 
     @staticmethod
     def _signal_suffix(signal: str) -> str:
         """Return the last underscore-separated suffix from a CubeMX signal token."""
-        signal = str(signal).strip()
+        signal = PeripheralParser._normalize_signal_token(signal)
         return signal.split("_")[-1].upper() if "_" in signal else signal.upper()
 
     @staticmethod
     def _parse_dma_request_endpoint(peripheral_full: str) -> Tuple[str, str]:
         """Split a DMA request target like ``USART1_TX`` into peripheral and direction."""
         endpoint = str(peripheral_full).strip()
-        match = re.match(r"^(.*)_([A-Z]+)$", endpoint)
+        match = re.match(r"^(.*)_([A-Z]+)$", endpoint.upper())
         if not match:
             return endpoint, "general"
         return match.group(1), match.group(2).lower()
+
+    @staticmethod
+    def _normalize_dma_direction(value: str) -> str:
+        """Return a complete DMA direction token without losing source/target context."""
+        direction = str(value).strip().upper()
+        if direction.startswith("DMA_"):
+            direction = direction[4:]
+        return direction.lower()
 
     def parse_gpio(self) -> None:
         """Common GPIO parsing logic."""
@@ -215,7 +276,7 @@ class PeripheralParser:
         """Handle individual GPIO property."""
         prop_map = {
             "Signal": ("Signal", value),
-            "GPIO_Label": ("Label", re.match(r"^\S+", value).group(0)),
+            "GPIO_Label": ("Label", str(value).split()[0] if str(value).split() else ""),
             "GPIO_PuPd": ("Pull", value),
         }
         field, val = prop_map[prop]
@@ -236,12 +297,12 @@ class McuParser(PeripheralParser):
 
     def parse(self, p_type: str) -> None:
         for key, value in self.raw_map.items():
-            if not key.startswith("Mcu"):
+            if not self._ioc_root_startswith(key, "Mcu"):
                 continue
-            parts = key.split(".")
-            if "Family" in parts[1]:
+            prop = self._ioc_key_prop(key, "")
+            if "Family" in prop:
                 self.config.mcu_config["Family"] = value
-            elif "CPN" in parts[1]:
+            elif "CPN" in prop:
                 self.config.mcu_config["Type"] = value
 
 
@@ -253,11 +314,14 @@ class TIMParser(PeripheralParser):
 
     def parse(self, p_type: str) -> None:
         for key, value in self.raw_map.items():
-            if not key.startswith("TIM"):
+            tim_name = self._ioc_key_root(key)
+            if not tim_name.startswith("TIM"):
                 continue
 
-            parts = key.split(".")
-            tim_name = parts[0]
+            parts = self._split_ioc_key(key)
+            if len(parts) < 2:
+                continue
+
             self._ensure_tim_instance(p_type, tim_name)
 
             if "Channel-PWM" in key:
@@ -331,15 +395,14 @@ class TIMParser(PeripheralParser):
         config = {}
         matched_pin = timer_name
         for pin_name, pin_cfg in self.config.pin_registry.items():
-            signal = str(pin_cfg.get("Signal", ""))
-            normalized_signal = signal[2:] if signal.startswith("S_") else signal
+            normalized_signal = self._normalize_signal_token(pin_cfg.get("Signal", ""))
             if normalized_signal in signal_candidates:
                 config = pin_cfg
                 matched_pin = pin_name
                 break
 
         label = config.get("Label", matched_pin)
-        signal = config.get("Signal", "")
+        signal = self._normalize_signal_token(config.get("Signal", ""))
         is_complementary = signal.endswith("N")  # e.g., TIM1_CH1N
         return label, is_complementary
 
@@ -354,10 +417,10 @@ class ADCParser(PeripheralParser):
 
     def parse(self, p_type: str) -> None:
         for key, value in self.raw_map.items():
-            if key.startswith("ADC"):
+            if self._ioc_root_startswith(key, "ADC"):
                 self._parse_adc_property(key, value)
         for key, value in self.raw_map.items():
-            if key.startswith("VP_") and key.endswith(".Signal"):
+            if self._ioc_root_startswith(key, "VP_") and key.endswith(".Signal"):
                 self._parse_vp_adc_signal(key, value)
         self._deduplicate_channels()
 
@@ -414,7 +477,7 @@ class ADCParser(PeripheralParser):
         - Captures CommonPathInternal (e.g. "null|ADC_CHANNEL_TEMPSENSOR_ADC1|null|null")
         so we can later choose the correct TempSensor macro without binding to MCU family.
         """
-        parts = key.split(".")
+        parts = self._split_ioc_key(key)
         if len(parts) < 2:
             return
 
@@ -452,10 +515,10 @@ class ADCParser(PeripheralParser):
         Per requirement: channels discovered here are added to 'Channels' ONLY,
         and NOT to 'RegularConversions'.
         """
-        if not value.startswith("ADC"):
+        if not self._normalize_signal_token(value).startswith("ADC"):
             return
 
-        parts = value.split("_")
+        parts = self._normalize_signal_token(value).split("_")
         if parts[0].startswith("ADC") and parts[0][-1].isdigit():
             adc_name = parts[0]  # e.g., ADC1
         else:
@@ -551,11 +614,11 @@ class DACParser(PeripheralParser):
                 continue
 
             # 2. Compatible with new CubeMX format (e.g. DAC1.DAC_Channel-DAC_OUT1=DAC_CHANNEL_1)
-            if key.startswith("DAC"):
+            if self._ioc_key_root(key).startswith("DAC"):
                 self._parse_dac_property(key, value)
 
     def _parse_dac_property(self, key: str, value: str) -> None:
-        parts = key.split(".")
+        parts = self._split_ioc_key(key)
         if len(parts) < 2:
             return
         dac_name = parts[0]
@@ -593,11 +656,14 @@ class SPIParser(PeripheralParser):
 
     def parse(self, p_type: str) -> None:
         for key, value in self.raw_map.items():
-            if not key.startswith("SPI"):
+            spi_name = self._ioc_key_root(key)
+            if not spi_name.startswith("SPI"):
                 continue
 
-            parts = key.split(".")
-            spi_name = parts[0]
+            parts = self._split_ioc_key(key)
+            if len(parts) < 2:
+                continue
+
             self._ensure_spi_instance(p_type, spi_name)
 
             prop = parts[1]
@@ -639,9 +705,12 @@ class USARTParser(PeripheralParser):
 
         # First pass: normal parsing from ADC/UART/LPUART property keys
         for key, value in self.raw_map.items():
-            if key.startswith(("USART", "UART", "LPUART")):
-                parts = key.split(".")
-                uart_name = parts[0]
+            uart_name = self._ioc_key_root(key)
+            if uart_name.startswith(("USART", "UART", "LPUART")):
+                parts = self._split_ioc_key(key)
+                if len(parts) < 2:
+                    continue
+
                 found_instances.add(uart_name)
                 self._ensure_uart_instance(p_type, uart_name)
 
@@ -702,15 +771,15 @@ class I2CParser(PeripheralParser):
 
     def parse(self, p_type: str) -> None:
         for key, value in self.raw_map.items():
-            if key.startswith("Mcu.IP"):
+            if self._ioc_key_startswith(key, "Mcu.IP"):
                 val = str(value)
                 if val.startswith("I2C"):
                     self._ensure_i2c_instance(p_type, val)
                 continue
 
-            if key.endswith(".Signal") and "I2C" in str(value):
+            if key.endswith(".Signal") and "I2C" in self._normalize_signal_token(value):
                 portpin = self._normalize_ioc_key_pin(key)
-                per_sig = str(value)
+                per_sig = self._normalize_signal_token(value)
                 i2c_name = self._signal_root(per_sig)
                 self._ensure_i2c_instance(p_type, i2c_name)
                 cfg = self.config.peripherals[p_type][i2c_name]
@@ -722,11 +791,14 @@ class I2CParser(PeripheralParser):
                     pins["SDA"] = portpin
                 continue
 
-            if not key.startswith("I2C"):
+            i2c_name = self._ioc_key_root(key)
+            if not i2c_name.startswith("I2C"):
                 continue
 
-            parts = key.split(".")
-            i2c_name = parts[0]
+            parts = self._split_ioc_key(key)
+            if len(parts) < 2:
+                continue
+
             self._ensure_i2c_instance(p_type, i2c_name)
 
             prop = parts[-1]
@@ -769,12 +841,14 @@ class CANParser(PeripheralParser):
     def parse(self, p_type: str) -> None:
         """Process CAN/FDCAN parameters with legacy support."""
         for key, value in self.raw_map.items():
-            if not key.startswith(("CAN", "FDCAN")):
+            can_name = self._ioc_key_root(key)
+            if not can_name.startswith(("CAN", "FDCAN")):
                 continue
 
-            parts = key.split(".")
-            can_name = parts[0]
             p_type = "FDCAN" if can_name.startswith("FDCAN") else "CAN"
+            parts = self._split_ioc_key(key)
+            if len(parts) < 2:
+                continue
 
             self._ensure_can_instance(p_type, can_name)
             prop = parts[1]
@@ -867,10 +941,10 @@ class USBParser(PeripheralParser):
         usb_names = set()
         # 1. Find all USB peripheral names in the raw_map
         for key, value in self.raw_map.items():
-            if key.startswith("Mcu.IP") and "USB" in value:
+            if self._ioc_key_startswith(key, "Mcu.IP") and "USB" in value:
                 usb_names.add(value)
             elif re.match(r"^USB(_OTG(_FS|_HS))?\.", key):
-                usb_names.add(key.split('.')[0])
+                usb_names.add(self._ioc_key_root(key))
 
         logging.info(f"[USBParser] Detected USB peripherals: {usb_names}")
 
@@ -879,7 +953,7 @@ class USBParser(PeripheralParser):
             logging.info(f"[USBParser] Parsing configuration for: {usb_name}")
 
             for key, value in self.raw_map.items():
-                if not key.startswith(usb_name):
+                if not self._has_ioc_prefix(key, usb_name):
                     continue
 
                 rest_key = key[len(usb_name) + 1:]  # Remove the "USB_OTG_FS." prefix
@@ -962,10 +1036,11 @@ class DMAParser(PeripheralParser):
         Stores the mapping and its type for each request.
         """
         for key, value in self.raw_map.items():
-            if key.startswith(f"{prefix}.Request"):
-                req_id = key.split("Request")[1].split("=")[0].strip()
-                self.config.dma_requests[req_id] = value  # Store peripheral as string
-                self.config.dma_types[req_id] = dma_type  # Store DMA type (DMA or BDMA)
+            req_id = self._dma_request_id(key, prefix)
+            if req_id is not None:
+                request_key = self._dma_request_key(prefix, req_id)
+                self.config.dma_requests[request_key] = value  # Store peripheral as string
+                self.config.dma_types[request_key] = dma_type  # Store DMA type (DMA or BDMA)
 
     def _parse_configs(self, prefix="Dma", dma_type="DMA") -> None:
         """
@@ -975,11 +1050,15 @@ class DMAParser(PeripheralParser):
         config_map = defaultdict(dict)
         for key, value in self.raw_map.items():
             # Only process keys of format Dma.<Periph>.<ReqID>.<Prop>
-            if not key.startswith(f"{prefix}.") or key.count(".") < 2:
+            if not self._ioc_root_startswith(key, prefix):
                 continue
-            parts = key.split(".")
+            parts = self._split_ioc_key(key)
+            if len(parts) < 3 or parts[0] != prefix:
+                continue
             peripheral = parts[1]
             req_id = parts[2]
+            if not req_id.isdigit():
+                continue
             prop = parts[3] if len(parts) > 3 else "Instance"
             config_key = f"{peripheral}_{req_id}"
             config_map[config_key][prop] = value
@@ -988,10 +1067,11 @@ class DMAParser(PeripheralParser):
         # Map and convert all recognized properties into a structured dictionary
         for config_key, props in config_map.items():
             req_id = props.get("_request_id", "")
-            dma_type = self.config.dma_types.get(req_id, "DMA")
+            request_key = self._dma_request_key(prefix, req_id)
+            dma_type = self.config.dma_types.get(request_key, "DMA")
             structured = {
                 "request_id": req_id,
-                "peripheral": self.config.dma_requests.get(req_id, "Unknown"),
+                "peripheral": self.config.dma_requests.get(request_key, "Unknown"),
                 "dma_type": dma_type,
                 "stream": props.get("Instance", ""),
             }
@@ -1004,6 +1084,8 @@ class DMAParser(PeripheralParser):
                         logging.warning(
                             f"DMA property conversion failed for {config_key}.{cube_prop}: {str(e)}"
                         )
+            if "Direction" in props:
+                structured["direction_full"] = self._normalize_dma_direction(props["Direction"])
             self.config.dma_configs[config_key] = structured
 
     def _link_configs(self) -> None:
@@ -1052,8 +1134,8 @@ class ThreadXParser(PeripheralParser):
             elif "ThreadXCcRTOSJjThreadXJjCore" in key:
                 self.config.threadx_config["CorePresent"] = value.lower() == "true"
 
-            elif key.startswith("AZRTOS.ThreadX.") and key.endswith(".StackSize"):
-                parts = key.split(".")
+            elif self._has_ioc_prefix(key, "AZRTOS.ThreadX") and key.endswith(".StackSize"):
+                parts = self._split_ioc_key(key)
                 if len(parts) == 3:
                     task = parts[1]
                     self.config.threadx_config["Tasks"][task] = {
@@ -1070,7 +1152,7 @@ class WatchdogParser(PeripheralParser):
     def parse(self, p_type: str) -> None:
         for key, value in self.raw_map.items():
             # IWDG
-            if key.startswith("VP_IWDG") and ".Mode" in key and value == "IWDG_Activate":
+            if self._ioc_root_startswith(key, "VP_IWDG") and ".Mode" in key and value == "IWDG_Activate":
                 # 这里的名字通常为 VP_IWDG_VS_IWDG，也可只按 IWDG 归档
                 match = re.match(r"VP_(IWDG\d*)_VS_IWDG\.Mode", key)
                 if match:
@@ -1079,10 +1161,10 @@ class WatchdogParser(PeripheralParser):
                         wdg_name = "IWDG"
                     self._ensure_wdg_instance("IWDG", wdg_name)
                     self.config.peripherals["IWDG"][wdg_name]["Enabled"] = True
-            elif key.startswith("IWDG"):
-                iwdg_name = key.split(".")[0]  # IWDG or IWDG1
+            elif self._ioc_key_root(key).startswith("IWDG"):
+                iwdg_name = self._ioc_key_root(key)  # IWDG or IWDG1
                 self._ensure_wdg_instance("IWDG", iwdg_name)
-                prop = key.split(".", 1)[1] if "." in key else None
+                prop = self._ioc_key_prop(key)
 
                 if prop == "Prescaler":
                     self.config.peripherals["IWDG"][iwdg_name]["Prescaler"] = sanitize_numeric(value)
@@ -1094,10 +1176,10 @@ class WatchdogParser(PeripheralParser):
                     self.config.peripherals["IWDG"][iwdg_name]["Enabled"] = (value == "ENABLE")
 
             # WWDG
-            elif key.startswith("WWDG"):
-                wwdg_name = key.split(".")[0]
+            elif self._ioc_key_root(key).startswith("WWDG"):
+                wwdg_name = self._ioc_key_root(key)
                 self._ensure_wdg_instance("WWDG", wwdg_name)
-                prop = key.split(".")[1] if "." in key else None
+                prop = self._ioc_key_prop(key)
 
                 if prop == "Prescaler":
                     self.config.peripherals["WWDG"][wwdg_name]["Prescaler"] = sanitize_numeric(value)
@@ -1121,10 +1203,12 @@ class FreeRTOSParser(PeripheralParser):
 
     def parse(self, p_type: str) -> None:
         for key, value in self.raw_map.items():
-            if not key.startswith("FREERTOS"):
+            if not self._ioc_root_startswith(key, "FREERTOS"):
                 continue
 
-            parts = key.split(".")
+            parts = self._split_ioc_key(key)
+            if len(parts) < 2:
+                continue
             if parts[1].startswith("Tasks"):
                 self._process_task_configuration(value)
             elif "HeapSize" in key:
@@ -1229,7 +1313,7 @@ def _link_dma_requests(config: ConfigurationManager) -> None:
     """Associate DMA requests with corresponding peripherals."""
     for req_id, peripheral in config.dma_requests.items():
         p_name, direction = PeripheralParser._parse_dma_request_endpoint(peripheral)
-        direction_key = f"DMA_{direction}" if direction != "general" else "DMA"
+        direction_key = f"DMA_{direction.upper()}" if direction != "general" else "DMA"
 
         for p_type in ["USART", "SPI", "ADC", "I2C"]:
             if p_name in config.peripherals[p_type]:

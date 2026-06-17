@@ -147,6 +147,10 @@ jobs:
         run: |
           python ./scripts/ci_import_smoke.py
 
+      - name: Run parser regression tests
+        run: |
+          python -m pytest tests
+
       - name: Checkout BSP Compatibility Test Repo
         uses: actions/checkout@v4
         with:
