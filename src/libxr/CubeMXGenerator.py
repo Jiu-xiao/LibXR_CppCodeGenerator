@@ -75,6 +75,77 @@ DIALOG_KEYWORDS = (
     "转换",
 )
 
+DIALOG_CLASS_KEYWORDS = (
+    "sunawtdialog",
+    "dialog",
+)
+
+PROGRESS_KEYWORDS = (
+    "progress",
+    "downloading",
+    "extracting",
+    "unzipping",
+    "download file",
+    "download paused",
+    "download resumed",
+    "user cancelled unzip",
+    "pause",
+    "resume",
+    "cancel",
+    "解压",
+    "下载中",
+    "下载暂停",
+    "下载恢复",
+    "取消",
+)
+
+PROGRESS_BUTTON_LABELS = (
+    "pause",
+    "resume",
+    "cancel",
+    "暂停",
+    "恢复",
+    "取消",
+)
+
+ACCOUNT_LOGIN_KEYWORDS = (
+    "login",
+    "log in",
+    "sign in",
+    "sign-in",
+    "st account",
+    "my st",
+    "myst",
+    "username",
+    "password",
+    "e-mail",
+    "email",
+    "authentication",
+    "登录",
+    "登入",
+    "账号",
+    "帐号",
+    "账户",
+    "密码",
+    "邮箱",
+)
+
+
+class DialogBlockedError(RuntimeError):
+    """Raised when CubeMX shows a dialog that cannot be accepted safely."""
+
+
+def _contains_any(text: str, keywords: Sequence[str]) -> bool:
+    return any(keyword in text for keyword in keywords)
+
+
+def _is_account_login_text(flat_text: str) -> bool:
+    return _contains_any(flat_text.lower(), ACCOUNT_LOGIN_KEYWORDS)
+
+
+def _is_progress_text(flat_text: str) -> bool:
+    return _contains_any(flat_text.lower(), PROGRESS_KEYWORDS)
+
 
 def _friendly_path_name(path: str) -> str:
     abs_path = os.path.abspath(path)
@@ -257,7 +328,11 @@ class _WindowsDialogController(_BaseDialogController):
     BM_CLICK = 0x00F5
     BM_GETCHECK = 0x00F0
     BST_CHECKED = 0x0001
+    KEYEVENTF_KEYUP = 0x0002
+    SW_RESTORE = 9
+    VK_TAB = 0x09
     VK_RETURN = 0x0D
+    VK_SPACE = 0x20
     WM_KEYDOWN = 0x0100
     WM_KEYUP = 0x0101
 
@@ -267,23 +342,31 @@ class _WindowsDialogController(_BaseDialogController):
         self.process_id = process_id
         self.wintypes = wintypes
         self.user32 = ctypes.windll.user32
+        self.kernel32 = ctypes.windll.kernel32
+        self.kernel32.CreateToolhelp32Snapshot.restype = self.wintypes.HANDLE
+        self.kernel32.Process32FirstW.restype = self.wintypes.BOOL
+        self.kernel32.Process32NextW.restype = self.wintypes.BOOL
         self._last_action: Dict[int, float] = {}
 
     def pump_once(self) -> None:
         hwnds = self._enum_windows()
         for hwnd in hwnds:
             title = self._window_text(hwnd)
+            class_name = self._class_name(hwnd)
             child_items = self._child_items(hwnd)
-            flat_text = "\n".join([title] + [text for _, text in child_items]).lower()
-            if not self._looks_relevant(flat_text):
+            flat_text = self._flatten_window_text(title, class_name, child_items)
+            if _is_account_login_text(flat_text):
+                raise DialogBlockedError("STM32CubeMX requested ST account login; pre-authenticate this user/session before running CI.")
+            if not self._looks_relevant(flat_text, class_name):
                 continue
             if self._acted_recently(hwnd):
                 continue
-            if self._accept_window(hwnd, child_items):
+            if self._accept_window(hwnd, class_name, child_items):
                 self._last_action[hwnd] = time.time()
 
     def _enum_windows(self) -> List[int]:
         hwnds: List[int] = []
+        process_ids = self._related_process_ids()
         enum_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, self.wintypes.HWND, self.wintypes.LPARAM)
 
         def callback(hwnd: int, _lparam: int) -> bool:
@@ -291,19 +374,61 @@ class _WindowsDialogController(_BaseDialogController):
                 return True
             pid = self.wintypes.DWORD()
             self.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-            if pid.value == self.process_id:
+            if pid.value in process_ids:
                 hwnds.append(hwnd)
             return True
 
         self.user32.EnumWindows(enum_proc(callback), 0)
         return hwnds
 
-    def _child_items(self, hwnd: int) -> List[Tuple[int, str]]:
-        items: List[Tuple[int, str]] = []
+    def _related_process_ids(self) -> set:
+        ids = {self.process_id}
+        class ProcessEntry(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", self.wintypes.DWORD),
+                ("cntUsage", self.wintypes.DWORD),
+                ("th32ProcessID", self.wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_void_p),
+                ("th32ModuleID", self.wintypes.DWORD),
+                ("cntThreads", self.wintypes.DWORD),
+                ("th32ParentProcessID", self.wintypes.DWORD),
+                ("pcPriClassBase", self.wintypes.LONG),
+                ("dwFlags", self.wintypes.DWORD),
+                ("szExeFile", self.wintypes.WCHAR * 260),
+            ]
+
+        snapshot = self.kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
+        if snapshot in (-1, self.wintypes.HANDLE(-1).value):
+            return ids
+
+        parent_by_pid: Dict[int, int] = {}
+        try:
+            entry = ProcessEntry()
+            entry.dwSize = ctypes.sizeof(entry)
+            ok = self.kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+            while ok:
+                parent_by_pid[int(entry.th32ProcessID)] = int(entry.th32ParentProcessID)
+                ok = self.kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+        except Exception:
+            pass
+        finally:
+            self.kernel32.CloseHandle(snapshot)
+
+        queue = [self.process_id]
+        while queue:
+            parent = queue.pop(0)
+            for pid, ppid in parent_by_pid.items():
+                if ppid == parent and pid not in ids:
+                    ids.add(pid)
+                    queue.append(pid)
+        return ids
+
+    def _child_items(self, hwnd: int) -> List[Tuple[int, str, str]]:
+        items: List[Tuple[int, str, str]] = []
         enum_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, self.wintypes.HWND, self.wintypes.LPARAM)
 
         def callback(child_hwnd: int, _lparam: int) -> bool:
-            items.append((child_hwnd, self._window_text(child_hwnd)))
+            items.append((child_hwnd, self._class_name(child_hwnd), self._window_text(child_hwnd)))
             return True
 
         self.user32.EnumChildWindows(hwnd, enum_proc(callback), 0)
@@ -322,37 +447,79 @@ class _WindowsDialogController(_BaseDialogController):
         self.user32.GetClassNameW(hwnd, buffer, len(buffer))
         return buffer.value
 
-    def _looks_relevant(self, flat_text: str) -> bool:
+    def _flatten_window_text(self, title: str, class_name: str, child_items: Sequence[Tuple[int, str, str]]) -> str:
+        parts = [title, class_name]
+        for _, child_class, text in child_items:
+            parts.extend((child_class, text))
+        return "\n".join(parts).lower()
+
+    def _looks_relevant(self, flat_text: str, class_name: str) -> bool:
+        if "sunawtdialog" in class_name.lower():
+            return True
         return any(keyword in flat_text for keyword in DIALOG_KEYWORDS)
+
+    def _is_progress_window(self, flat_text: str, child_items: Sequence[Tuple[int, str, str]]) -> bool:
+        if any(keyword in flat_text for keyword in PROGRESS_KEYWORDS):
+            return True
+        for _, _, text in child_items:
+            lowered = text.lower()
+            if any(label == lowered or label in lowered for label in PROGRESS_BUTTON_LABELS):
+                return True
+        return False
 
     def _acted_recently(self, hwnd: int) -> bool:
         last = self._last_action.get(hwnd, 0.0)
         return (time.time() - last) < 2.0
 
-    def _accept_window(self, hwnd: int, child_items: Sequence[Tuple[int, str]]) -> bool:
-        for child_hwnd, text in child_items:
+    def _accept_window(self, hwnd: int, class_name: str, child_items: Sequence[Tuple[int, str, str]]) -> bool:
+        flat_text = self._flatten_window_text(self._window_text(hwnd), class_name, child_items)
+        if _is_account_login_text(flat_text):
+            raise DialogBlockedError("STM32CubeMX requested ST account login; pre-authenticate this user/session before running CI.")
+        if self._is_progress_window(flat_text, child_items):
+            LOGGER.info("Skipping CubeMX progress window to avoid interrupting downloads/extraction")
+            return False
+
+        for child_hwnd, child_class, text in child_items:
             lowered = text.lower()
             if not any(label in lowered for label in AGREEMENT_LABELS):
                 continue
-            if self._class_name(child_hwnd) != "Button":
+            if child_class != "Button":
                 continue
             checked = self.user32.SendMessageW(child_hwnd, self.BM_GETCHECK, 0, 0)
             if checked != self.BST_CHECKED:
                 self.user32.SendMessageW(child_hwnd, self.BM_CLICK, 0, 0)
                 LOGGER.info("Auto-confirmed agreement checkbox: %s", text)
 
-        for child_hwnd, text in child_items:
+        for child_hwnd, _, text in child_items:
             lowered = text.lower()
             if any(label in lowered for label in POSITIVE_BUTTON_LABELS):
                 self.user32.SendMessageW(child_hwnd, self.BM_CLICK, 0, 0)
                 LOGGER.info("Auto-confirmed CubeMX dialog button: %s", text)
                 return True
 
+        if "sunawtdialog" in class_name.lower():
+            self._confirm_awt_dialog(hwnd)
+            LOGGER.info("Auto-confirmed CubeMX Java dialog with keyboard fallback")
+            return True
+
+        LOGGER.info("Relevant CubeMX window detected but no safe positive button was found; leaving it untouched")
+        return False
+
+    def _tap_key(self, virtual_key: int) -> None:
+        self.user32.keybd_event(virtual_key, 0, 0, 0)
+        time.sleep(0.03)
+        self.user32.keybd_event(virtual_key, 0, self.KEYEVENTF_KEYUP, 0)
+        time.sleep(0.08)
+
+    def _confirm_awt_dialog(self, hwnd: int) -> None:
+        self.user32.ShowWindow(hwnd, self.SW_RESTORE)
         self.user32.SetForegroundWindow(hwnd)
-        self.user32.PostMessageW(hwnd, self.WM_KEYDOWN, self.VK_RETURN, 0)
-        self.user32.PostMessageW(hwnd, self.WM_KEYUP, self.VK_RETURN, 0)
-        LOGGER.info("Auto-confirmed CubeMX dialog via Enter fallback")
-        return True
+        time.sleep(0.1)
+        # Swing dialogs often expose no native Button children. Space handles an
+        # initial license checkbox focus; Tab/Enter then activates the default
+        # positive action on migration/download/license prompts.
+        for key in (self.VK_SPACE, self.VK_TAB, self.VK_RETURN):
+            self._tap_key(key)
 
 
 class _LinuxX11DialogController(_BaseDialogController):
@@ -370,14 +537,23 @@ class _LinuxX11DialogController(_BaseDialogController):
         self.pid_atom = self.display.intern_atom("_NET_WM_PID")
         self.name_atom = self.display.intern_atom("_NET_WM_NAME")
         self.utf8_atom = self.display.intern_atom("UTF8_STRING")
+        self.class_atom = self.display.intern_atom("WM_CLASS")
         self._last_action: Dict[int, float] = {}
 
     def pump_once(self) -> None:
+        process_ids = self._related_process_ids()
         for window in self._iter_windows(self.root):
-            if self._window_pid(window) != self.process_id:
+            if self._window_pid(window) not in process_ids:
                 continue
-            title = self._window_title(window).lower()
-            if not self._looks_relevant(title):
+            title = self._window_title(window)
+            class_name = self._window_class(window)
+            flat_text = "\n".join((title, class_name)).lower()
+            if _is_account_login_text(flat_text):
+                raise DialogBlockedError("STM32CubeMX requested ST account login; pre-authenticate this user/session before running CI.")
+            if not self._looks_relevant(flat_text, class_name):
+                continue
+            if self._is_progress_window(flat_text):
+                LOGGER.info("Skipping CubeMX progress window to avoid interrupting downloads/extraction")
                 continue
             if self._acted_recently(window.id):
                 continue
@@ -393,6 +569,35 @@ class _LinuxX11DialogController(_BaseDialogController):
             return
         for child in children:
             yield from self._iter_windows(child)
+
+    def _related_process_ids(self) -> set:
+        ids = {self.process_id}
+        queue = [self.process_id]
+        while queue:
+            parent = queue.pop(0)
+            try:
+                for entry in os.listdir("/proc"):
+                    if not entry.isdigit():
+                        continue
+                    stat_path = os.path.join("/proc", entry, "stat")
+                    try:
+                        with open(stat_path, "r", encoding="utf-8", errors="ignore") as stat_file:
+                            fields = stat_file.read().split()
+                    except OSError:
+                        continue
+                    if len(fields) < 4:
+                        continue
+                    try:
+                        pid = int(fields[0])
+                        ppid = int(fields[3])
+                    except ValueError:
+                        continue
+                    if ppid == parent and pid not in ids:
+                        ids.add(pid)
+                        queue.append(pid)
+            except OSError:
+                break
+        return ids
 
     def _window_pid(self, window) -> int:
         try:
@@ -419,8 +624,32 @@ class _LinuxX11DialogController(_BaseDialogController):
         except Exception:
             return ""
 
-    def _looks_relevant(self, flat_text: str) -> bool:
-        return any(keyword in flat_text for keyword in DIALOG_KEYWORDS) or "stm32cubemx" in flat_text
+    def _window_class(self, window) -> str:
+        try:
+            value = window.get_wm_class()
+            if value:
+                return "\n".join(str(item) for item in value if item)
+        except Exception:
+            pass
+        try:
+            prop = window.get_full_property(self.class_atom, self.X.AnyPropertyType)
+            if prop and prop.value:
+                value = prop.value
+                if isinstance(value, bytes):
+                    return value.replace(b"\x00", b"\n").decode("utf-8", errors="ignore")
+                return str(value)
+        except Exception:
+            pass
+        return ""
+
+    def _looks_relevant(self, flat_text: str, class_name: str) -> bool:
+        lowered_class = class_name.lower()
+        if any(keyword in lowered_class for keyword in DIALOG_CLASS_KEYWORDS):
+            return True
+        return any(keyword in flat_text for keyword in DIALOG_KEYWORDS)
+
+    def _is_progress_window(self, flat_text: str) -> bool:
+        return _is_progress_text(flat_text)
 
     def _acted_recently(self, window_id: int) -> bool:
         last = self._last_action.get(window_id, 0.0)
@@ -477,14 +706,36 @@ class _DialogWatchThread(threading.Thread):
         self.controller = create_dialog_controller(process_id)
         self.stop_event = stop_event
         self.poll_interval = poll_interval
+        self.error: Optional[BaseException] = None
 
     def run(self) -> None:
         while not self.stop_event.is_set():
             try:
                 self.controller.pump_once()
+            except DialogBlockedError as error:
+                self.error = error
+                self.stop_event.set()
+                break
             except Exception as error:
                 LOGGER.warning("CubeMX dialog watcher error: %s", error)
             self.stop_event.wait(self.poll_interval)
+
+
+def _terminate_process_tree(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            return
+        except Exception:
+            pass
+    process.kill()
 
 
 def _tail_text(text: str, lines: int = 40) -> str:
@@ -605,13 +856,24 @@ def generate_cubemx_project(
     stderr_thread.start()
 
     timeout_error: Optional[TimeoutError] = None
+    dialog_error: Optional[BaseException] = None
+    deadline = time.time() + timeout
     try:
-        returncode = process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired as error:
-        process.kill()
-        returncode = process.wait(timeout=5)
-        timeout_error = TimeoutError(f"STM32CubeMX timed out after {timeout} seconds")
-        timeout_error.__cause__ = error
+        while True:
+            if watch_thread is not None and watch_thread.error is not None:
+                dialog_error = watch_thread.error
+                _terminate_process_tree(process)
+                returncode = process.wait(timeout=5)
+                break
+            returncode = process.poll()
+            if returncode is not None:
+                break
+            if time.time() >= deadline:
+                _terminate_process_tree(process)
+                returncode = process.wait(timeout=5)
+                timeout_error = TimeoutError(f"STM32CubeMX timed out after {timeout} seconds")
+                break
+            time.sleep(0.2)
     finally:
         stop_event.set()
         if watch_thread is not None:
@@ -645,6 +907,9 @@ def generate_cubemx_project(
 
     if timeout_error is not None:
         raise timeout_error
+
+    if dialog_error is not None:
+        raise RuntimeError(str(dialog_error)) from dialog_error
 
     if returncode != 0:
         stdout_tail = _tail_text(stdout_text)

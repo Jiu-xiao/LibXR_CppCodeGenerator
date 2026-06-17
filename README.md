@@ -223,6 +223,9 @@ Parses `.ioc`, generates YAML and C++ code, patches interrupt handlers, and init
   Windows 使用标准库 `ctypes` 枚举窗口并点击常见按钮；Linux 需要 X11 `DISPLAY`，并建议安装 `python-xlib`。
   Windows uses stdlib `ctypes` window automation; Linux requires an X11 `DISPLAY` and is best used with `python-xlib` installed.
 
+  如果 CubeMX 弹出 ST 账号登录窗口，工具会停止并报错；CI 需要先在同一用户/桌面会话中完成登录或包授权状态预热。
+  If CubeMX opens an ST account login window, the tool fails fast; CI should pre-authenticate or pre-warm package authorization in the same user/desktop session.
+
 - `--cubemx-timeout <SECONDS>`
 
   CubeMX 生成超时时间，默认 `1200` 秒。
@@ -251,8 +254,8 @@ Windows 上推荐显式给出 Java 和 CubeMX 路径 / Windows example:
 
 ```powershell
 xr_cubemx_generate -d . `
-  --cubemx-cmd "C:\Users\a2592\AppData\Local\Programs\STM32CubeMX\STM32CubeMX.exe" `
-  --java-cmd "C:\Users\a2592\AppData\Local\Programs\STM32CubeMX\jre\bin\java.exe" `
+  --cubemx-cmd "$env:LOCALAPPDATA\Programs\STM32CubeMX\STM32CubeMX.exe" `
+  --java-cmd "$env:LOCALAPPDATA\Programs\STM32CubeMX\jre\bin\java.exe" `
   --launch-mode java `
   --cubemx-auto-confirm `
   --log-dir .cubemx-logs `
