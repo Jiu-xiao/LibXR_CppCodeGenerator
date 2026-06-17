@@ -21,6 +21,13 @@ SRC_DIR = REPO_ROOT / "src"
 FAKE_CUBEMX = REPO_ROOT / "scripts" / "fake_cubemx.py"
 SECRET_USERNAME = "ci-user@example.invalid"
 SECRET_PASSWORD = "not-a-real-secret"
+CI_STATE_ENV_KEYS = (
+    "HOME",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "STM32CUBEMX_CI_STATE_B64",
+)
 
 sys.path.insert(0, str(SRC_DIR))
 
@@ -122,14 +129,36 @@ def _make_unsafe_ci_state_archive(tmpdir: Path) -> Path:
     return archive
 
 
+def _save_env(keys):
+    return {key: os.environ.get(key) for key in keys}
+
+
+def _restore_env(saved) -> None:
+    for key, value in saved.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
+def _set_fake_user_profile(root: Path) -> None:
+    appdata = root / "AppData" / "Roaming"
+    local_appdata = root / "AppData" / "Local"
+    appdata.mkdir(parents=True, exist_ok=True)
+    local_appdata.mkdir(parents=True, exist_ok=True)
+    os.environ["HOME"] = str(root)
+    os.environ["USERPROFILE"] = str(root)
+    os.environ["APPDATA"] = str(appdata)
+    os.environ["LOCALAPPDATA"] = str(local_appdata)
+
+
 def _run_ci_state_restore(tmpdir: Path) -> None:
     archive = _make_ci_state_archive(tmpdir)
-    old_home = os.environ.get("HOME")
-    old_b64 = os.environ.get("STM32CUBEMX_CI_STATE_B64")
+    saved_env = _save_env(CI_STATE_ENV_KEYS)
     try:
         restore_home = tmpdir / "restore_home"
         restore_home.mkdir()
-        os.environ["HOME"] = str(restore_home)
+        _set_fake_user_profile(restore_home)
         restored = restore_cubemx_ci_state(str(archive))
         if ".stm32cubemx" not in restored or "STM32Cube/Repository" not in restored:
             raise SystemExit(f"unexpected restored targets: {restored}")
@@ -150,20 +179,13 @@ def _run_ci_state_restore(tmpdir: Path) -> None:
 
         b64_home = tmpdir / "restore_home_b64"
         b64_home.mkdir()
-        os.environ["HOME"] = str(b64_home)
+        _set_fake_user_profile(b64_home)
         os.environ["STM32CUBEMX_CI_STATE_B64"] = base64.b64encode(archive.read_bytes()).decode("ascii")
         restored_b64 = restore_cubemx_ci_state()
         if "STM32Cube/Repository" not in restored_b64:
             raise SystemExit(f"base64 state archive did not restore repository: {restored_b64}")
     finally:
-        if old_home is None:
-            os.environ.pop("HOME", None)
-        else:
-            os.environ["HOME"] = old_home
-        if old_b64 is None:
-            os.environ.pop("STM32CUBEMX_CI_STATE_B64", None)
-        else:
-            os.environ["STM32CUBEMX_CI_STATE_B64"] = old_b64
+        _restore_env(saved_env)
 
 
 def _run_login_secret_smoke(project_dir: Path) -> None:
