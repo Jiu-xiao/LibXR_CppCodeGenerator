@@ -31,7 +31,15 @@ CI_STATE_ENV_KEYS = (
 
 sys.path.insert(0, str(SRC_DIR))
 
-from libxr.CubeMXGenerator import generate_cubemx_project, restore_cubemx_ci_state  # noqa: E402
+from libxr.CubeMXGenerator import (  # noqa: E402
+    GENERIC_DIALOG_CONFIRM_LIMIT,
+    _can_use_generic_dialog_fallback,
+    _is_dialog_class,
+    _is_explicit_dialog_text,
+    build_cubemx_command,
+    generate_cubemx_project,
+    restore_cubemx_ci_state,
+)
 import libxr.ConfigCubemxProject as cfg  # noqa: E402
 
 
@@ -63,6 +71,55 @@ def _run_direct_generation(project_dir: Path) -> None:
         raise SystemExit(f"fake CubeMX returned {result.returncode}")
     if not (project_dir / "Core" / "Inc" / "fake_generated.h").exists():
         raise SystemExit("direct runner did not create expected output")
+
+
+def _run_java_command_home_smoke(tmpdir: Path) -> None:
+    saved_env = _save_env(CI_STATE_ENV_KEYS)
+    try:
+        java_home = tmpdir / "java_home"
+        java_home.mkdir()
+        _set_fake_user_profile(java_home)
+        script_path = str(tmpdir / "cubemx_generate.txt")
+
+        command = build_cubemx_command(
+            str(FAKE_CUBEMX),
+            script_path,
+            launch_mode="java",
+            java_cmd=sys.executable,
+        )
+        jar_index = command.index("-jar")
+        expected_home = os.path.abspath(os.path.expanduser("~"))
+        expected_prefs = os.path.join(expected_home, ".java")
+        if f"-Duser.home={expected_home}" not in command[:jar_index]:
+            raise SystemExit("Java CubeMX launch does not bind user.home before -jar")
+        if f"-Djava.util.prefs.userRoot={expected_prefs}" not in command[:jar_index]:
+            raise SystemExit("Java CubeMX launch does not bind java.util.prefs.userRoot before -jar")
+        if command[jar_index + 1:jar_index + 4] != [str(FAKE_CUBEMX), "-q", script_path]:
+            raise SystemExit(f"unexpected Java CubeMX command tail: {command}")
+
+        direct_command = build_cubemx_command(str(FAKE_CUBEMX), script_path, launch_mode="direct")
+        if any(arg.startswith("-Duser.home=") for arg in direct_command):
+            raise SystemExit("direct CubeMX launch unexpectedly received Java user.home options")
+    finally:
+        _restore_env(saved_env)
+
+
+def _run_dialog_filter_smoke() -> None:
+    if not _is_explicit_dialog_text("Migrate project to the new STM32CubeMX version"):
+        raise SystemExit("CubeMX migration dialog text is not recognized")
+    if not _is_explicit_dialog_text("Download STM32Cube FW_H7 package and accept license agreement"):
+        raise SystemExit("CubeMX package download/license dialog text is not recognized")
+    if not _is_dialog_class("sunAwtDialog"):
+        raise SystemExit("CubeMX Java dialog class is not recognized")
+
+    confirm_counts = {}
+    can_fallback = _can_use_generic_dialog_fallback(confirm_counts, 42, "", "sunAwtDialog")
+    for _ in range(GENERIC_DIALOG_CONFIRM_LIMIT - 1):
+        can_fallback = can_fallback and _can_use_generic_dialog_fallback(confirm_counts, 42, "", "sunAwtDialog")
+    if not can_fallback:
+        raise SystemExit("generic CubeMX dialog fallback was blocked too early")
+    if _can_use_generic_dialog_fallback(confirm_counts, 42, "", "sunAwtDialog"):
+        raise SystemExit("generic CubeMX dialog fallback was not bounded")
 
 
 def _run_config_entry(project_dir: Path) -> None:
@@ -227,6 +284,8 @@ def main() -> int:
         project_dir.mkdir()
         _write_ioc(project_dir)
         _run_direct_generation(project_dir)
+        _run_java_command_home_smoke(tmpdir)
+        _run_dialog_filter_smoke()
 
         project_cfg = tmpdir / "cfg_project"
         project_cfg.mkdir()

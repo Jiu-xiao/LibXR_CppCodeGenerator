@@ -33,6 +33,8 @@ POSITIVE_BUTTON_LABELS = (
     "continue",
     "download",
     "install",
+    "migrate",
+    "convert",
     "finish",
     "close",
     "同意",
@@ -42,6 +44,8 @@ POSITIVE_BUTTON_LABELS = (
     "继续",
     "下载",
     "安装",
+    "迁移",
+    "转换",
     "完成",
     "关闭",
 )
@@ -138,6 +142,7 @@ DEFAULT_CI_STATE_ARCHIVE_ENV = "STM32CUBEMX_CI_STATE_ARCHIVE"
 DEFAULT_CI_STATE_B64_ENV = "STM32CUBEMX_CI_STATE_B64"
 DEFAULT_ST_USERNAME_ENV = "STM32CUBEMX_USERNAME"
 DEFAULT_ST_PASSWORD_ENV = "STM32CUBEMX_PASSWORD"
+GENERIC_DIALOG_CONFIRM_LIMIT = 2
 
 _X11_SHIFTED_CHARS = {
     "~": "grave",
@@ -221,6 +226,42 @@ def _is_account_login_text(flat_text: str) -> bool:
 
 def _is_progress_text(flat_text: str) -> bool:
     return _contains_any(flat_text.lower(), PROGRESS_KEYWORDS)
+
+
+def _is_explicit_dialog_text(flat_text: str) -> bool:
+    return _contains_any(flat_text.lower(), DIALOG_KEYWORDS)
+
+
+def _is_dialog_class(class_name: str) -> bool:
+    lowered_class = class_name.lower()
+    return any(keyword in lowered_class for keyword in DIALOG_CLASS_KEYWORDS)
+
+
+def _java_user_state_options() -> List[str]:
+    java_home = os.path.abspath(os.path.expanduser("~"))
+    prefs_root = os.path.join(java_home, ".java")
+    return [
+        f"-Duser.home={java_home}",
+        f"-Djava.util.prefs.userRoot={prefs_root}",
+    ]
+
+
+def _can_use_generic_dialog_fallback(
+    confirm_counts: Dict[int, int],
+    window_id: int,
+    flat_text: str,
+    class_name: str,
+) -> bool:
+    if _is_explicit_dialog_text(flat_text):
+        return True
+    if not _is_dialog_class(class_name):
+        return False
+    count = confirm_counts.get(window_id, 0)
+    if count >= GENERIC_DIALOG_CONFIRM_LIMIT:
+        LOGGER.info("Leaving generic CubeMX dialog untouched after %d keyboard attempts", count)
+        return False
+    confirm_counts[window_id] = count + 1
+    return True
 
 
 def _default_ci_state_targets() -> Dict[str, str]:
@@ -554,7 +595,7 @@ def build_cubemx_command(
     command: List[str]
     if use_java:
         resolved_java = resolve_java_command(cubemx_cmd, java_cmd)
-        command = [resolved_java, "-jar", cubemx_cmd, "-q", script_path]
+        command = [resolved_java, *_java_user_state_options(), "-jar", cubemx_cmd, "-q", script_path]
     elif cubemx_cmd.lower().endswith(".py"):
         command = [sys.executable, cubemx_cmd, "-q", script_path]
     else:
@@ -623,6 +664,7 @@ class _WindowsDialogController(_BaseDialogController):
         self.kernel32.GlobalLock.restype = ctypes.c_void_p
         self._last_action: Dict[int, float] = {}
         self._login_attempted: Dict[int, float] = {}
+        self._generic_confirm_count: Dict[int, int] = {}
 
     def pump_once(self) -> None:
         hwnds = self._enum_windows()
@@ -733,9 +775,12 @@ class _WindowsDialogController(_BaseDialogController):
         return "\n".join(parts).lower()
 
     def _looks_relevant(self, flat_text: str, class_name: str) -> bool:
-        if "sunawtdialog" in class_name.lower():
+        if _is_dialog_class(class_name):
             return True
-        return any(keyword in flat_text for keyword in DIALOG_KEYWORDS)
+        return _is_explicit_dialog_text(flat_text)
+
+    def _can_use_keyboard_fallback(self, hwnd: int, flat_text: str, class_name: str) -> bool:
+        return _can_use_generic_dialog_fallback(self._generic_confirm_count, hwnd, flat_text, class_name)
 
     def _is_progress_window(self, flat_text: str, child_items: Sequence[Tuple[int, str, str]]) -> bool:
         if any(keyword in flat_text for keyword in PROGRESS_KEYWORDS):
@@ -778,7 +823,7 @@ class _WindowsDialogController(_BaseDialogController):
                 LOGGER.info("Auto-confirmed CubeMX dialog button: %s", text)
                 return True
 
-        if "sunawtdialog" in class_name.lower():
+        if self._can_use_keyboard_fallback(hwnd, flat_text, class_name):
             self._confirm_awt_dialog(hwnd)
             LOGGER.info("Auto-confirmed CubeMX Java dialog with keyboard fallback")
             return True
@@ -886,6 +931,7 @@ class _LinuxX11DialogController(_BaseDialogController):
         self.class_atom = self.display.intern_atom("WM_CLASS")
         self._last_action: Dict[int, float] = {}
         self._login_attempted: Dict[int, float] = {}
+        self._generic_confirm_count: Dict[int, int] = {}
 
     def pump_once(self) -> None:
         process_ids = self._related_process_ids()
@@ -906,6 +952,8 @@ class _LinuxX11DialogController(_BaseDialogController):
                 LOGGER.info("Skipping CubeMX progress window to avoid interrupting downloads/extraction")
                 continue
             if self._acted_recently(window.id):
+                continue
+            if not self._can_use_keyboard_fallback(window.id, flat_text, class_name):
                 continue
             self._activate_window(window)
             self._confirm_window()
@@ -993,10 +1041,12 @@ class _LinuxX11DialogController(_BaseDialogController):
         return ""
 
     def _looks_relevant(self, flat_text: str, class_name: str) -> bool:
-        lowered_class = class_name.lower()
-        if any(keyword in lowered_class for keyword in DIALOG_CLASS_KEYWORDS):
+        if _is_dialog_class(class_name):
             return True
-        return any(keyword in flat_text for keyword in DIALOG_KEYWORDS)
+        return _is_explicit_dialog_text(flat_text)
+
+    def _can_use_keyboard_fallback(self, window_id: int, flat_text: str, class_name: str) -> bool:
+        return _can_use_generic_dialog_fallback(self._generic_confirm_count, window_id, flat_text, class_name)
 
     def _is_progress_window(self, flat_text: str) -> bool:
         return _is_progress_text(flat_text)
