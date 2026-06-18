@@ -85,6 +85,7 @@ DIALOG_KEYWORDS = (
 
 STARTUP_DIALOG_KEYWORDS = (
     "user preferences",
+    "project manager settings",
 )
 
 DIALOG_CLASS_KEYWORDS = (
