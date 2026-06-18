@@ -114,6 +114,10 @@ def _run_dialog_filter_smoke() -> None:
         raise SystemExit("CubeMX startup User Preferences window is not recognized")
     if not _is_explicit_dialog_text("Project Manager Settings"):
         raise SystemExit("CubeMX Project Manager Settings window is not recognized")
+    if not _is_explicit_dialog_text("Load Project"):
+        raise SystemExit("CubeMX Load Project dialog text is not recognized")
+    if not _is_explicit_dialog_text("Software packs loading failed"):
+        raise SystemExit("CubeMX software pack load failure dialog text is not recognized")
     if not _is_dialog_class("sunAwtDialog"):
         raise SystemExit("CubeMX Java dialog class is not recognized")
 

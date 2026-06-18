@@ -86,6 +86,8 @@ DIALOG_KEYWORDS = (
 STARTUP_DIALOG_KEYWORDS = (
     "user preferences",
     "project manager settings",
+    "load project",
+    "software packs loading failed",
 )
 
 DIALOG_CLASS_KEYWORDS = (
