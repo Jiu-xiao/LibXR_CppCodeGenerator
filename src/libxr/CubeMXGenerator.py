@@ -83,6 +83,10 @@ DIALOG_KEYWORDS = (
     "转换",
 )
 
+STARTUP_DIALOG_KEYWORDS = (
+    "user preferences",
+)
+
 DIALOG_CLASS_KEYWORDS = (
     "sunawtdialog",
     "dialog",
@@ -229,7 +233,12 @@ def _is_progress_text(flat_text: str) -> bool:
 
 
 def _is_explicit_dialog_text(flat_text: str) -> bool:
-    return _contains_any(flat_text.lower(), DIALOG_KEYWORDS)
+    lowered = flat_text.lower()
+    return _contains_any(lowered, DIALOG_KEYWORDS) or _is_startup_dialog_text(lowered)
+
+
+def _is_startup_dialog_text(flat_text: str) -> bool:
+    return _contains_any(flat_text.lower(), STARTUP_DIALOG_KEYWORDS)
 
 
 def _is_dialog_class(class_name: str) -> bool:
@@ -252,10 +261,16 @@ def _can_use_generic_dialog_fallback(
     flat_text: str,
     class_name: str,
 ) -> bool:
+    if _is_startup_dialog_text(flat_text):
+        return _consume_generic_dialog_fallback(confirm_counts, window_id)
     if _is_explicit_dialog_text(flat_text):
         return True
     if not _is_dialog_class(class_name):
         return False
+    return _consume_generic_dialog_fallback(confirm_counts, window_id)
+
+
+def _consume_generic_dialog_fallback(confirm_counts: Dict[int, int], window_id: int) -> bool:
     count = confirm_counts.get(window_id, 0)
     if count >= GENERIC_DIALOG_CONFIRM_LIMIT:
         LOGGER.info("Leaving generic CubeMX dialog untouched after %d keyboard attempts", count)

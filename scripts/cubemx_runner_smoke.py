@@ -109,6 +109,8 @@ def _run_dialog_filter_smoke() -> None:
         raise SystemExit("CubeMX migration dialog text is not recognized")
     if not _is_explicit_dialog_text("Download STM32Cube FW_H7 package and accept license agreement"):
         raise SystemExit("CubeMX package download/license dialog text is not recognized")
+    if not _is_explicit_dialog_text("User Preferences"):
+        raise SystemExit("CubeMX startup User Preferences window is not recognized")
     if not _is_dialog_class("sunAwtDialog"):
         raise SystemExit("CubeMX Java dialog class is not recognized")
 
@@ -120,6 +122,20 @@ def _run_dialog_filter_smoke() -> None:
         raise SystemExit("generic CubeMX dialog fallback was blocked too early")
     if _can_use_generic_dialog_fallback(confirm_counts, 42, "", "sunAwtDialog"):
         raise SystemExit("generic CubeMX dialog fallback was not bounded")
+
+    startup_counts = {}
+    can_startup_fallback = _can_use_generic_dialog_fallback(startup_counts, 43, "User Preferences", "sunAwtFrame")
+    for _ in range(GENERIC_DIALOG_CONFIRM_LIMIT - 1):
+        can_startup_fallback = can_startup_fallback and _can_use_generic_dialog_fallback(
+            startup_counts,
+            43,
+            "User Preferences",
+            "sunAwtFrame",
+        )
+    if not can_startup_fallback:
+        raise SystemExit("CubeMX startup dialog fallback was blocked too early")
+    if _can_use_generic_dialog_fallback(startup_counts, 43, "User Preferences", "sunAwtFrame"):
+        raise SystemExit("CubeMX startup dialog fallback was not bounded")
 
 
 def _run_config_entry(project_dir: Path) -> None:
