@@ -229,6 +229,16 @@ def _is_account_login_text(flat_text: str) -> bool:
     return _contains_any(flat_text.lower(), ACCOUNT_LOGIN_KEYWORDS)
 
 
+def _note_login_window_without_credentials(last_seen: Dict[int, float], window_id: int) -> None:
+    now = time.time()
+    if (now - last_seen.get(window_id, 0.0)) >= 30.0:
+        LOGGER.info(
+            "Detected CubeMX ST account/login window but no ST credentials are configured; "
+            "leaving it untouched."
+        )
+        last_seen[window_id] = now
+
+
 def _is_progress_text(flat_text: str) -> bool:
     return _contains_any(flat_text.lower(), PROGRESS_KEYWORDS)
 
@@ -702,6 +712,7 @@ class _WindowsDialogController(_BaseDialogController):
         self.kernel32.GlobalLock.restype = ctypes.c_void_p
         self._last_action: Dict[int, float] = {}
         self._login_attempted: Dict[int, float] = {}
+        self._login_seen_without_credentials: Dict[int, float] = {}
         self._generic_confirm_count: Dict[int, int] = {}
 
     def pump_once(self) -> None:
@@ -712,6 +723,9 @@ class _WindowsDialogController(_BaseDialogController):
             child_items = self._child_items(hwnd)
             flat_text = self._flatten_window_text(title, class_name, child_items)
             if _is_account_login_text(flat_text):
+                if self.credentials is None:
+                    _note_login_window_without_credentials(self._login_seen_without_credentials, hwnd)
+                    continue
                 if self._submit_login(hwnd):
                     self._last_action[hwnd] = time.time()
                     continue
@@ -836,6 +850,9 @@ class _WindowsDialogController(_BaseDialogController):
     def _accept_window(self, hwnd: int, class_name: str, child_items: Sequence[Tuple[int, str, str]]) -> bool:
         flat_text = self._flatten_window_text(self._window_text(hwnd), class_name, child_items)
         if _is_account_login_text(flat_text):
+            if self.credentials is None:
+                _note_login_window_without_credentials(self._login_seen_without_credentials, hwnd)
+                return False
             if self._submit_login(hwnd):
                 return True
             raise DialogBlockedError(_st_login_blocked_message())
@@ -969,6 +986,7 @@ class _LinuxX11DialogController(_BaseDialogController):
         self.class_atom = self.display.intern_atom("WM_CLASS")
         self._last_action: Dict[int, float] = {}
         self._login_attempted: Dict[int, float] = {}
+        self._login_seen_without_credentials: Dict[int, float] = {}
         self._generic_confirm_count: Dict[int, int] = {}
 
     def pump_once(self) -> None:
@@ -980,6 +998,9 @@ class _LinuxX11DialogController(_BaseDialogController):
             class_name = self._window_class(window)
             flat_text = "\n".join((title, class_name)).lower()
             if _is_account_login_text(flat_text):
+                if self.credentials is None:
+                    _note_login_window_without_credentials(self._login_seen_without_credentials, window.id)
+                    continue
                 if self._submit_login(window):
                     self._last_action[window.id] = time.time()
                     continue

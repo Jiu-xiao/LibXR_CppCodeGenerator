@@ -33,6 +33,7 @@ sys.path.insert(0, str(SRC_DIR))
 
 from libxr.CubeMXGenerator import (  # noqa: E402
     GENERIC_DIALOG_CONFIRM_LIMIT,
+    _WindowsDialogController,
     _can_use_generic_dialog_fallback,
     _is_dialog_class,
     _is_explicit_dialog_text,
@@ -144,6 +145,14 @@ def _run_dialog_filter_smoke() -> None:
         raise SystemExit("CubeMX startup dialog fallback was not bounded")
     if startup_counts.get(43) != GENERIC_DIALOG_CONFIRM_LIMIT + 1:
         raise SystemExit("CubeMX startup dialog fallback did not suppress repeated limit logs")
+
+    controller = object.__new__(_WindowsDialogController)
+    controller.credentials = None
+    controller._login_seen_without_credentials = {}
+    controller._flatten_window_text = lambda title, class_name, child_items: "ST account login password"
+    controller._window_text = lambda hwnd: "ST account"
+    if controller._accept_window(100, "SunAwtDialog", []) is not False:
+        raise SystemExit("CubeMX login window without credentials was not left untouched")
 
 
 def _run_config_entry(project_dir: Path) -> None:
