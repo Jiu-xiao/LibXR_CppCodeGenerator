@@ -122,6 +122,10 @@ def _run_dialog_filter_smoke() -> None:
         raise SystemExit("generic CubeMX dialog fallback was blocked too early")
     if _can_use_generic_dialog_fallback(confirm_counts, 42, "", "sunAwtDialog"):
         raise SystemExit("generic CubeMX dialog fallback was not bounded")
+    if confirm_counts.get(42) != GENERIC_DIALOG_CONFIRM_LIMIT + 1:
+        raise SystemExit("generic CubeMX dialog fallback did not suppress repeated limit logs")
+    if _can_use_generic_dialog_fallback(confirm_counts, 42, "", "sunAwtDialog"):
+        raise SystemExit("generic CubeMX dialog fallback recovered after being suppressed")
 
     startup_counts = {}
     can_startup_fallback = _can_use_generic_dialog_fallback(startup_counts, 43, "User Preferences", "sunAwtFrame")
@@ -136,6 +140,8 @@ def _run_dialog_filter_smoke() -> None:
         raise SystemExit("CubeMX startup dialog fallback was blocked too early")
     if _can_use_generic_dialog_fallback(startup_counts, 43, "User Preferences", "sunAwtFrame"):
         raise SystemExit("CubeMX startup dialog fallback was not bounded")
+    if startup_counts.get(43) != GENERIC_DIALOG_CONFIRM_LIMIT + 1:
+        raise SystemExit("CubeMX startup dialog fallback did not suppress repeated limit logs")
 
 
 def _run_config_entry(project_dir: Path) -> None:

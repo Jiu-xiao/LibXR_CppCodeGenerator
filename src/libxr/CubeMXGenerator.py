@@ -269,7 +269,9 @@ def _can_use_generic_dialog_fallback(
 def _consume_generic_dialog_fallback(confirm_counts: Dict[int, int], window_id: int) -> bool:
     count = confirm_counts.get(window_id, 0)
     if count >= GENERIC_DIALOG_CONFIRM_LIMIT:
-        LOGGER.info("Leaving generic CubeMX dialog untouched after %d keyboard attempts", count)
+        if count == GENERIC_DIALOG_CONFIRM_LIMIT:
+            LOGGER.info("Leaving generic CubeMX dialog untouched after %d keyboard attempts", count)
+            confirm_counts[window_id] = count + 1
         return False
     confirm_counts[window_id] = count + 1
     return True
