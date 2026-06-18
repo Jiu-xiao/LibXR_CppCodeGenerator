@@ -276,6 +276,7 @@ def _run_login_secret_smoke(project_dir: Path) -> None:
         os.environ["STM32CUBEMX_USERNAME"] = SECRET_USERNAME
         os.environ["STM32CUBEMX_PASSWORD"] = SECRET_PASSWORD
         log_dir = project_dir / "cubemx_logs"
+        os.environ["FAKE_CUBEMX_ECHO_SCRIPT"] = "1"
         generate_cubemx_project(
             project_dir=str(project_dir),
             cubemx_cmd=str(FAKE_CUBEMX),
@@ -285,10 +286,37 @@ def _run_login_secret_smoke(project_dir: Path) -> None:
             allow_st_login=True,
             timeout=10,
         )
-        command_log = (log_dir / "cubemx_command.txt").read_text(encoding="utf-8")
-        if SECRET_USERNAME in command_log or SECRET_PASSWORD in command_log:
-            raise SystemExit("ST login secrets leaked into CubeMX command log")
+        log_files = [
+            log_dir / "cubemx_command.txt",
+            log_dir / "cubemx_generate.txt",
+            log_dir / "cubemx_stdout.log",
+            log_dir / "cubemx_stderr.log",
+        ]
+        for log_file in log_files:
+            log_text = log_file.read_text(encoding="utf-8")
+            if SECRET_USERNAME in log_text or SECRET_PASSWORD in log_text:
+                raise SystemExit(f"ST login secrets leaked into {log_file.name}")
+        script_log = (log_dir / "cubemx_generate.txt").read_text(encoding="utf-8")
+        if "login <STM32CUBEMX_USERNAME> <STM32CUBEMX_PASSWORD> true" not in script_log:
+            raise SystemExit("redacted CubeMX login command was not written to script log")
+
+        try:
+            generate_cubemx_project(
+                project_dir=str(project_dir),
+                cubemx_cmd=str(FAKE_CUBEMX),
+                launch_mode="direct",
+                java_cmd="",
+                keep_script=True,
+                allow_st_login=True,
+                timeout=10,
+            )
+        except RuntimeError as error:
+            if "--script-path or --keep-script" not in str(error):
+                raise
+        else:
+            raise SystemExit("persistent CubeMX login script was not rejected")
     finally:
+        os.environ.pop("FAKE_CUBEMX_ECHO_SCRIPT", None)
         if old_user is None:
             os.environ.pop("STM32CUBEMX_USERNAME", None)
         else:

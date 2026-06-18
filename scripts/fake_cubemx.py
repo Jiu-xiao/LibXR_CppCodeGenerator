@@ -28,6 +28,9 @@ def main() -> int:
     with open(script_path, "r", encoding="utf-8") as script_file:
         script = script_file.read()
 
+    if os.environ.get("FAKE_CUBEMX_ECHO_SCRIPT"):
+        print(script, end="")
+
     cwd = os.getcwd()
     target_dir = cwd
 

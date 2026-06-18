@@ -575,14 +575,38 @@ def _format_script_path(path: str) -> str:
     return normalized
 
 
-def build_cubemx_script(ioc_path: str, generate_code_dir: str = "") -> str:
-    script_lines = [f"config load {_format_script_path(ioc_path)}"]
+def build_cubemx_script(
+    ioc_path: str,
+    generate_code_dir: str = "",
+    credentials: Optional[STLoginCredentials] = None,
+    redact_secrets: bool = False,
+) -> str:
+    script_lines = []
+    if credentials is not None:
+        username = "<STM32CUBEMX_USERNAME>" if redact_secrets else credentials.username
+        password = "<STM32CUBEMX_PASSWORD>" if redact_secrets else credentials.password
+        script_lines.append(f"login {username} {password} true")
+    script_lines.append(f"config load {_format_script_path(ioc_path)}")
     if generate_code_dir:
         script_lines.append(f"generate code {_format_script_path(generate_code_dir)}")
     else:
         script_lines.append("project generate")
     script_lines.append("exit")
     return "\n".join(script_lines) + "\n"
+
+
+def _redact_text(text: str, secrets: Sequence[str]) -> str:
+    redacted = text
+    for secret in secrets:
+        if secret:
+            redacted = redacted.replace(secret, "<redacted>")
+    return redacted
+
+
+def _redaction_secrets(credentials: Optional[STLoginCredentials]) -> List[str]:
+    if credentials is None:
+        return []
+    return [credentials.username, credentials.password]
 
 
 def _shell_join(args: Sequence[str]) -> str:
@@ -1349,17 +1373,30 @@ def generate_cubemx_project(
         username_env=st_username_env,
         password_env=st_password_env,
     )
+    if credentials is not None and (script_path or keep_script):
+        raise RuntimeError(
+            "--allow-st-login writes ST credentials into the CubeMX script; "
+            "do not combine it with --script-path or --keep-script. Use --log-dir for redacted logs."
+        )
     if credentials is not None and not auto_confirm:
         LOGGER.info("Enabling CubeMX dialog watcher because ST login automation was explicitly requested")
         auto_confirm = True
 
     resolved_cubemx_cmd = resolve_cubemx_command(cubemx_cmd)
     actual_script_path, should_cleanup_script = _prepare_script_path(project_dir, script_path, keep_script)
-    _write_text_file(actual_script_path, build_cubemx_script(ioc_path, generate_code_dir))
+    script_text = build_cubemx_script(ioc_path, generate_code_dir, credentials=credentials)
+    redacted_script_text = build_cubemx_script(
+        ioc_path,
+        generate_code_dir,
+        credentials=credentials,
+        redact_secrets=True,
+    )
+    redaction_secrets = _redaction_secrets(credentials)
+    _write_text_file(actual_script_path, script_text)
 
     if log_dir:
         os.makedirs(log_dir, exist_ok=True)
-        _write_text_file(os.path.join(log_dir, "cubemx_generate.txt"), build_cubemx_script(ioc_path, generate_code_dir))
+        _write_text_file(os.path.join(log_dir, "cubemx_generate.txt"), redacted_script_text)
 
     command = build_cubemx_command(
         resolved_cubemx_cmd,
@@ -1383,6 +1420,7 @@ def generate_cubemx_project(
     def consume_stream(stream, sink: List[str], handle) -> None:
         try:
             for line in iter(stream.readline, ""):
+                line = _redact_text(line, redaction_secrets)
                 sink.append(line)
                 if handle is not None:
                     handle.write(line)
