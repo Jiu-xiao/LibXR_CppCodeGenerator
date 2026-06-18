@@ -1069,12 +1069,35 @@ class _LinuxX11DialogController(_BaseDialogController):
         last = self._last_action.get(window_id, 0.0)
         return (time.time() - last) < 3.0
 
-    def _activate_window(self, window) -> None:
+    def _focus_first_viewable_window(self, window) -> bool:
+        for candidate in self._iter_windows(window):
+            try:
+                attributes = candidate.get_attributes()
+                if attributes.map_state != self.X.IsViewable:
+                    continue
+                candidate.set_input_focus(self.X.RevertToParent, self.X.CurrentTime)
+                self.display.sync()
+                return True
+            except Exception:
+                continue
+        return False
+
+    def _activate_window(self, window) -> bool:
         try:
-            window.set_input_focus(self.X.RevertToParent, self.X.CurrentTime)
+            window.configure(stack_mode=self.X.Above)
             self.display.sync()
         except Exception:
             pass
+
+        if self._focus_first_viewable_window(window):
+            return True
+
+        try:
+            window.set_input_focus(self.X.RevertToParent, self.X.CurrentTime)
+            self.display.sync()
+            return True
+        except Exception:
+            return False
 
     def _tap(self, key_name: str, alt: bool = False, shift: bool = False, control: bool = False) -> None:
         keycode = self.display.keysym_to_keycode(self.XK.string_to_keysym(key_name))
@@ -1138,7 +1161,7 @@ class _LinuxX11DialogController(_BaseDialogController):
         return True
 
     def _confirm_window(self) -> None:
-        for key_name, alt in (("space", False), ("Tab", False), ("Return", False), ("y", True), ("o", True), ("i", True), ("a", True)):
+        for key_name, alt in (("Return", False), ("space", False), ("Tab", False), ("Return", False), ("o", True), ("y", True), ("i", True), ("a", True)):
             self._tap(key_name, alt=alt)
         LOGGER.info("Auto-confirmed CubeMX dialog with X11 key sequence")
 
