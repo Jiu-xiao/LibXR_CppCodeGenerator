@@ -1102,7 +1102,10 @@ class _LinuxX11DialogController(_BaseDialogController):
     def _window_abs_geometry(self, window) -> Optional[Tuple[int, int, int, int]]:
         try:
             geometry = window.get_geometry()
-            translated = window.translate_coords(self.root, 0, 0)
+            parent = window.query_tree().parent
+            if parent is None:
+                return int(geometry.x), int(geometry.y), int(geometry.width), int(geometry.height)
+            translated = parent.translate_coords(self.root, geometry.x, geometry.y)
             return int(translated.x), int(translated.y), int(geometry.width), int(geometry.height)
         except Exception:
             return None
