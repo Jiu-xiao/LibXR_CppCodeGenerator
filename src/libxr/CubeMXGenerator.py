@@ -970,7 +970,7 @@ class _LinuxX11DialogController(_BaseDialogController):
             if not self._can_use_keyboard_fallback(window.id, flat_text, class_name):
                 continue
             self._activate_window(window)
-            self._confirm_window()
+            self._confirm_window(window)
             self._last_action[window.id] = time.time()
 
     def _iter_windows(self, window):
@@ -1099,6 +1099,39 @@ class _LinuxX11DialogController(_BaseDialogController):
         except Exception:
             return False
 
+    def _window_abs_geometry(self, window) -> Optional[Tuple[int, int, int, int]]:
+        try:
+            geometry = window.get_geometry()
+            translated = window.translate_coords(self.root, 0, 0)
+            return int(translated.x), int(translated.y), int(geometry.width), int(geometry.height)
+        except Exception:
+            return None
+
+    def _click_default_dialog_button(self, window) -> bool:
+        geometry = self._window_abs_geometry(window)
+        if geometry is None:
+            return False
+        x, y, width, height = geometry
+        if width < 80 or height < 60:
+            return False
+
+        # Swing/AWT dialogs often do not expose native button text through X11.
+        # The positive action is conventionally centered in the bottom button row.
+        click_x = x + width // 2
+        click_y = y + max(1, height - 24)
+        try:
+            self.xtest.fake_input(self.display, self.X.MotionNotify, x=click_x, y=click_y)
+            self.display.sync()
+            time.sleep(0.03)
+            self.xtest.fake_input(self.display, self.X.ButtonPress, 1)
+            self.xtest.fake_input(self.display, self.X.ButtonRelease, 1)
+            self.display.sync()
+            LOGGER.info("Auto-clicked CubeMX dialog default button at %d,%d", click_x, click_y)
+            return True
+        except Exception as error:
+            LOGGER.debug("CubeMX X11 default-button click failed: %s", error)
+            return False
+
     def _tap(self, key_name: str, alt: bool = False, shift: bool = False, control: bool = False) -> None:
         keycode = self.display.keysym_to_keycode(self.XK.string_to_keysym(key_name))
         if not keycode:
@@ -1160,10 +1193,11 @@ class _LinuxX11DialogController(_BaseDialogController):
         LOGGER.info("Submitted ST account credentials to CubeMX login dialog")
         return True
 
-    def _confirm_window(self) -> None:
+    def _confirm_window(self, window) -> None:
         for key_name, alt in (("Return", False), ("space", False), ("Tab", False), ("Return", False), ("o", True), ("y", True), ("i", True), ("a", True)):
             self._tap(key_name, alt=alt)
-        LOGGER.info("Auto-confirmed CubeMX dialog with X11 key sequence")
+        clicked = self._click_default_dialog_button(window)
+        LOGGER.info("Auto-confirmed CubeMX dialog with X11 key sequence%s", " and default-button click" if clicked else "")
 
 def _st_login_blocked_message() -> str:
     return (
