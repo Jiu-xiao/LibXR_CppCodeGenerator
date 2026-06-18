@@ -261,13 +261,9 @@ def _can_use_generic_dialog_fallback(
     flat_text: str,
     class_name: str,
 ) -> bool:
-    if _is_startup_dialog_text(flat_text):
+    if _is_explicit_dialog_text(flat_text) or _is_dialog_class(class_name):
         return _consume_generic_dialog_fallback(confirm_counts, window_id)
-    if _is_explicit_dialog_text(flat_text):
-        return True
-    if not _is_dialog_class(class_name):
-        return False
-    return _consume_generic_dialog_fallback(confirm_counts, window_id)
+    return False
 
 
 def _consume_generic_dialog_fallback(confirm_counts: Dict[int, int], window_id: int) -> bool:
