@@ -101,17 +101,7 @@ Automatically configures an STM32CubeMX project.
 
 ```bash
 usage: xr_cubemx_cfg [-h] -d DIRECTORY [-t TERMINAL] [--xrobot] [--commit COMMIT] [--git-source GIT_SOURCE]
-                     [--git-mirrors GIT_MIRRORS] [--cubemx-generate] [--cubemx-cmd CUBEMX_CMD]
-                     [--java-cmd JAVA_CMD] [--cubemx-launch-mode {auto,direct,java}]
-                     [--cubemx-generate-code-dir CUBEMX_GENERATE_CODE_DIR]
-                     [--cubemx-expect-path CUBEMX_EXPECT_PATH] [--cubemx-log-dir CUBEMX_LOG_DIR]
-                     [--cubemx-script-path CUBEMX_SCRIPT_PATH] [--cubemx-keep-script]
-                     [--cubemx-silent] [--cubemx-auto-confirm]
-                     [--cubemx-restore-ci-state] [--cubemx-ci-state-archive CUBEMX_CI_STATE_ARCHIVE]
-                     [--cubemx-ci-state-b64-env CUBEMX_CI_STATE_B64_ENV]
-                     [--cubemx-allow-st-login] [--cubemx-st-username-env CUBEMX_ST_USERNAME_ENV]
-                     [--cubemx-st-password-env CUBEMX_ST_PASSWORD_ENV]
-                     [--cubemx-timeout CUBEMX_TIMEOUT]
+                     [--git-mirrors GIT_MIRRORS]
 ```
 
 解析 `.ioc` 文件，生成 YAML 和 C++ 驱动代码，补丁中断处理函数，并初始化项目结构
@@ -175,82 +165,6 @@ Parses `.ioc`, generates YAML and C++ code, patches interrupt handlers, and init
   export XR_GIT_MIRRORS="https://gitee.com/jiu-xiao/libxr"
   ```
 
-- `--cubemx-generate`
-
-  在解析 `.ioc` 之前先调用 STM32CubeMX 脚本模式生成工程。默认不启用。
-  Run STM32CubeMX script-mode generation before parsing the `.ioc`. Disabled by default.
-
-- `--cubemx-cmd <PATH>`
-
-  显式指定 `STM32CubeMX` 可执行文件路径。
-  Explicit STM32CubeMX executable path.
-
-- `--java-cmd <PATH>`
-
-  当 `--cubemx-launch-mode=java` 或 Windows 自动选择 `java -jar` 时，显式指定 Java 路径。
-  Explicit Java path for `java -jar` launch mode.
-
-- `--cubemx-launch-mode {auto,direct,java}`
-
-  CubeMX 启动方式。`auto` 在 Windows 默认走 `java -jar`，其他平台默认直接调用可执行文件。
-  CubeMX launch mode. `auto` prefers `java -jar` on Windows and direct execution elsewhere.
-
-- `--cubemx-generate-code-dir <DIR>`
-
-  使用 `generate code <DIR>` 脚本命令，而不是 `project generate`。
-  Use `generate code <DIR>` instead of `project generate` in the CubeMX script.
-
-- `--cubemx-expect-path <PATH>`
-
-  生成完成后必须存在的路径，可重复传入多个。适合 CI 做结果判定。
-  Path that must exist after generation. Can be passed multiple times for CI verification.
-
-- `--cubemx-log-dir <DIR>`
-
-  保存 `cubemx_generate.txt`、命令行、stdout/stderr 日志。
-  Save the generated script, command line, and stdout/stderr logs.
-
-- `--cubemx-script-path <PATH>` / `--cubemx-keep-script`
-
-  保留生成的 CubeMX 脚本，便于手工复现和 CI 归档。
-  Keep the generated CubeMX script for manual repro or CI artifacts.
-
-- `--cubemx-silent`
-
-  给 CubeMX 追加 `-s`。
-  Pass `-s` to CubeMX.
-
-- `--cubemx-auto-confirm`
-
-  纯 Python 的弹窗自动确认层，尝试处理迁移、包下载、协议确认等对话框。
-  Enable the pure-Python dialog auto-confirm layer for migration, package download, and license dialogs.
-
-  Windows 使用标准库 `ctypes` 枚举窗口并点击常见按钮；Linux 需要 X11 `DISPLAY`，并建议安装 `python-xlib`。
-  Windows uses stdlib `ctypes` window automation; Linux requires an X11 `DISPLAY` and is best used with `python-xlib` installed.
-
-  默认情况下，如果 CubeMX 弹出 ST 账号登录窗口，工具会停止并报错；CI 应优先还原预热好的 CubeMX 状态和固件包缓存。
-  By default, if CubeMX opens an ST account login window, the tool fails fast; CI should preferably restore pre-warmed CubeMX state and firmware package cache.
-
-- `--cubemx-restore-ci-state` / `--cubemx-ci-state-archive <ARCHIVE>`
-
-  在启动 CubeMX 前还原预热好的用户状态和固件包缓存。归档文件支持 `.zip`、`.tar`、`.tar.gz` 等格式，只会解包白名单路径：`.stm32cubemx`、`STM32Cube/Repository`、Windows 的 `AppData/Roaming/STM32CubeMX` 和 `AppData/Local/STM32CubeMX`。
-  Restore pre-warmed user state and firmware package cache before launching CubeMX. Archives can be `.zip`, `.tar`, `.tar.gz`, etc. Only whitelisted paths are extracted: `.stm32cubemx`, `STM32Cube/Repository`, and Windows `AppData/Roaming/STM32CubeMX` / `AppData/Local/STM32CubeMX`.
-
-- `--cubemx-ci-state-b64-env <ENV>`
-
-  从环境变量读取 base64 编码的 CubeMX 状态归档。默认环境变量名为 `STM32CUBEMX_CI_STATE_B64`，适合 GitHub Actions secret。
-  Read a base64-encoded CubeMX state archive from an environment variable. The default is `STM32CUBEMX_CI_STATE_B64`, which is suitable for GitHub Actions secrets.
-
-- `--cubemx-allow-st-login`
-
-  显式允许在检测到 ST 账号登录窗口时自动输入凭据。凭据只从环境变量读取，默认是 `STM32CUBEMX_USERNAME` 和 `STM32CUBEMX_PASSWORD`；工具不会把凭据写入命令行日志。该模式需要桌面会话和 `--cubemx-auto-confirm`，若未显式传入会自动启用窗口 watcher。
-  Explicitly allow automatic credential entry when an ST account login dialog is detected. Credentials are read only from environment variables, defaulting to `STM32CUBEMX_USERNAME` and `STM32CUBEMX_PASSWORD`; they are not written to command logs. This mode requires a desktop session and the dialog watcher; if `--cubemx-auto-confirm` is omitted, the watcher is enabled automatically.
-
-- `--cubemx-timeout <SECONDS>`
-
-  CubeMX 生成超时时间，默认 `1200` 秒。
-  CubeMX generation timeout, default `1200` seconds.
-
 #### 🌐 网络与镜像说明 (Networking & Mirrors)
 
 工具会在 GitHub 与内置/自定义镜像间测速并选择最快源。
@@ -267,7 +181,7 @@ The new `xr_cubemx_generate` entrypoint can be used standalone when you only wan
 最小脚本模式命令示例 / Minimal example:
 
 ```bash
-xr_cubemx_generate -d . --cubemx-cmd /path/to/STM32CubeMX --expect-path Core/Inc --expect-path Drivers
+xr_cubemx_generate -d . --cubemx-cmd /path/to/STM32CubeMX
 ```
 
 Windows 上推荐显式给出 Java 和 CubeMX 路径 / Windows example:
@@ -278,20 +192,7 @@ xr_cubemx_generate -d . `
   --java-cmd "$env:LOCALAPPDATA\Programs\STM32CubeMX\jre\bin\java.exe" `
   --launch-mode java `
   --cubemx-auto-confirm `
-  --log-dir .cubemx-logs `
-  --expect-path Core\Inc `
-  --expect-path Drivers
-```
-
-在 `xr_cubemx_cfg` 中串起来 / Chained with `xr_cubemx_cfg`:
-
-```bash
-xr_cubemx_cfg -d . \
-  --cubemx-generate \
-  --cubemx-cmd /path/to/STM32CubeMX \
-  --cubemx-log-dir .cubemx-logs \
-  --cubemx-expect-path Core/Inc \
-  --cubemx-expect-path Drivers
+  --log-dir .cubemx-logs
 ```
 
 注意：CubeMX 脚本模式仍可能启动 GUI。`--cubemx-auto-confirm` 是对 GUI 弹窗的兜底，不是官方 headless 模式。
@@ -321,11 +222,7 @@ usage: xr_cubemx_generate [-h] -d DIRECTORY [--ioc IOC] [--cubemx-cmd CUBEMX_CMD
                           [--java-cmd JAVA_CMD] [--launch-mode {auto,direct,java}]
                           [--generate-code-dir GENERATE_CODE_DIR] [--expect-path EXPECT_PATH]
                           [--log-dir LOG_DIR] [--script-path SCRIPT_PATH] [--keep-script]
-                          [--silent] [--auto-confirm] [--restore-ci-state]
-                          [--ci-state-archive CI_STATE_ARCHIVE]
-                          [--ci-state-b64-env CI_STATE_B64_ENV]
-                          [--allow-st-login] [--st-username-env ST_USERNAME_ENV]
-                          [--st-password-env ST_PASSWORD_ENV] [--timeout TIMEOUT]
+                          [--silent] [--auto-confirm] [--timeout TIMEOUT]
 ```
 
 用途 / Purpose:
@@ -337,61 +234,16 @@ usage: xr_cubemx_generate [-h] -d DIRECTORY [--ioc IOC] [--cubemx-cmd CUBEMX_CMD
 - 在已有 `.ioc` 上做预生成或复现 GUI 迁移流程
   Pre-generate projects or reproduce GUI migration flows from an existing `.ioc`
 
-#### CI 中处理 ST 登录 / ST Login Handling In CI
+默认会校验 `Core/Inc` 和 `Drivers` 已生成；如需覆盖默认值，可重复传入 `--expect-path`。
+By default, the runner verifies that `Core/Inc` and `Drivers` were generated; pass `--expect-path` one or more times to override the defaults.
 
-推荐做法是先在一台同版本 CubeMX 的桌面环境里手动完成一次：打开 `.ioc`、迁移保存、安装需要的 `STM32Cube_FW_*` 包、接受协议、登录 ST 账号。然后把该用户的 CubeMX 状态和固件包缓存打包为 CI secret。
-The recommended path is to pre-warm one desktop environment with the same CubeMX version: open the `.ioc`, migrate/save it, install the required `STM32Cube_FW_*` packages, accept licenses, and log into the ST account. Then package that user's CubeMX state and firmware cache as a CI secret.
+#### CubeMX 前置条件 / CubeMX Prerequisites
 
-Linux/macOS 打包示例 / Linux/macOS packaging example:
+该工具不登录 ST 账号，也不恢复 CubeMX 用户状态或固件缓存。运行前必须确保当前电脑上的 CubeMX 已经能手动打开并生成目标 `.ioc`：已登录、已安装对应 `STM32Cube_FW_*` 包、已接受协议、旧工程迁移已保存。
+This tool does not sign in to ST accounts and does not restore CubeMX user state or firmware caches. Before running it, make sure CubeMX on this same machine can manually open and generate the target `.ioc`: signed in, required `STM32Cube_FW_*` packages installed, licenses accepted, and old-project migration saved.
 
-```bash
-tar -czf cubemx-ci-state.tar.gz \
-  -C "$HOME" .stm32cubemx STM32Cube/Repository
-base64 -w0 cubemx-ci-state.tar.gz > cubemx-ci-state.b64
-```
-
-Windows PowerShell 打包示例 / Windows PowerShell packaging example:
-
-```powershell
-$paths = @(
-  "$env:USERPROFILE\.stm32cubemx",
-  "$env:USERPROFILE\STM32Cube\Repository",
-  "$env:APPDATA\STM32CubeMX",
-  "$env:LOCALAPPDATA\STM32CubeMX"
-) | Where-Object { Test-Path $_ }
-Compress-Archive -Path $paths -DestinationPath cubemx-ci-state.zip -Force
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("cubemx-ci-state.zip")) | Set-Content -NoNewline cubemx-ci-state.b64
-```
-
-把 `cubemx-ci-state.b64` 的内容保存为 GitHub secret `STM32CUBEMX_CI_STATE_B64` 后，CI 里这样调用：
-Store the content of `cubemx-ci-state.b64` as the GitHub secret `STM32CUBEMX_CI_STATE_B64`, then call:
-
-```bash
-xr_cubemx_generate -d . \
-  --cubemx-cmd /path/to/STM32CubeMX \
-  --restore-ci-state \
-  --auto-confirm \
-  --expect-path Core/Inc \
-  --expect-path Drivers
-```
-
-GitHub Actions 示例 / GitHub Actions example:
-
-```yaml
-- name: Generate STM32 project with CubeMX
-  env:
-    STM32CUBEMX_CI_STATE_B64: ${{ secrets.STM32CUBEMX_CI_STATE_B64 }}
-  run: |
-    xr_cubemx_generate -d . \
-      --cubemx-cmd /opt/st/stm32cubemx/STM32CubeMX \
-      --restore-ci-state \
-      --auto-confirm \
-      --expect-path Core/Inc \
-      --expect-path Drivers
-```
-
-如果确实需要在 CI 中首次完成登录，可额外设置 `STM32CUBEMX_USERNAME` 和 `STM32CUBEMX_PASSWORD` 两个 secret，并传入 `--allow-st-login`。这只是兜底方案；长期 CI 更应该使用预热状态归档，避免每次在线登录和下载固件包。
-If CI must perform the first login, set `STM32CUBEMX_USERNAME` and `STM32CUBEMX_PASSWORD` as secrets and pass `--allow-st-login`. This is a fallback; long-running CI should use the pre-warmed state archive to avoid online login and firmware downloads on every run.
+CI 如果要运行 CubeMX，也必须运行在这样的已配置桌面环境中。
+If CI runs CubeMX, it must run in such an already configured desktop environment.
 
 #### 📦 输出内容 (Outputs)
 
@@ -401,8 +253,8 @@ If CI must perform the first login, set `STM32CUBEMX_USERNAME` and `STM32CUBEMX_
 - 可选日志目录中的命令、stdout、stderr
   Optional command/stdout/stderr logs in `--log-dir`
 
-- 由 `--expect-path` 校验的 CubeMX 生成目录或文件
-  CubeMX-generated directories or files verified through `--expect-path`
+- 默认校验的 `Core/Inc`、`Drivers`，或由 `--expect-path` 覆盖的生成目录/文件
+  Default `Core/Inc` and `Drivers` checks, or generated directories/files overridden through `--expect-path`
 
 ---
 

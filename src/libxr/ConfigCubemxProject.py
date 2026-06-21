@@ -9,8 +9,6 @@ import sys
 
 import argparse
 
-from libxr.CubeMXGenerator import generate_cubemx_project
-
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 DEFAULT_MIRRORS = [
@@ -413,42 +411,6 @@ def main():
                         help="Git source base URL or full repo URL, or 'auto'/'github' (default: auto)")
     parser.add_argument("--git-mirrors", default="",
                         help="Comma-separated mirror base/repo URLs (will be tried when --git-source=auto)")
-    parser.add_argument("--cubemx-generate", action="store_true",
-                        help="Run STM32CubeMX script-mode generation before parsing the .ioc")
-    parser.add_argument("--cubemx-cmd", default="",
-                        help="STM32CubeMX executable path used with --cubemx-generate")
-    parser.add_argument("--java-cmd", default="",
-                        help="Java executable path used with --cubemx-generate")
-    parser.add_argument("--cubemx-launch-mode", choices=["auto", "direct", "java"], default="auto",
-                        help="CubeMX launch mode for --cubemx-generate (default: auto)")
-    parser.add_argument("--cubemx-generate-code-dir", default="",
-                        help="Use 'generate code <dir>' instead of 'project generate' when running CubeMX")
-    parser.add_argument("--cubemx-expect-path", action="append", default=[],
-                        help="Path that must exist after CubeMX generation; can be passed multiple times")
-    parser.add_argument("--cubemx-log-dir", default="",
-                        help="Directory for CubeMX command/script/stdout/stderr logs")
-    parser.add_argument("--cubemx-script-path", default="",
-                        help="Explicit path for the generated CubeMX script file")
-    parser.add_argument("--cubemx-keep-script", action="store_true",
-                        help="Keep the generated CubeMX script in the project directory")
-    parser.add_argument("--cubemx-silent", action="store_true",
-                        help="Pass -s to STM32CubeMX during --cubemx-generate")
-    parser.add_argument("--cubemx-auto-confirm", action="store_true",
-                        help="Attempt to auto-confirm migration/license/download dialogs during CubeMX generation")
-    parser.add_argument("--cubemx-restore-ci-state", action="store_true",
-                        help="Restore pre-warmed CubeMX CI state/cache before launching CubeMX")
-    parser.add_argument("--cubemx-ci-state-archive", default="",
-                        help="Path to a tar/zip archive containing pre-warmed CubeMX state/cache")
-    parser.add_argument("--cubemx-ci-state-b64-env", default="STM32CUBEMX_CI_STATE_B64",
-                        help="Environment variable containing base64-encoded CubeMX state/cache archive")
-    parser.add_argument("--cubemx-allow-st-login", action="store_true",
-                        help="Allow explicit ST account login via environment variables when login dialogs appear")
-    parser.add_argument("--cubemx-st-username-env", default="STM32CUBEMX_USERNAME",
-                        help="Environment variable containing the ST account username")
-    parser.add_argument("--cubemx-st-password-env", default="STM32CUBEMX_PASSWORD",
-                        help="Environment variable containing the ST account password")
-    parser.add_argument("--cubemx-timeout", type=int, default=1200,
-                        help="CubeMX generation timeout in seconds (default: 1200)")
 
     args = parser.parse_args()
 
@@ -509,30 +471,6 @@ def main():
         sys.exit(1)
 
     logging.info(f"Found .ioc file: {ioc_file}")
-
-    if args.cubemx_generate:
-        logging.info("Running STM32CubeMX generation before codegen...")
-        generate_cubemx_project(
-            project_dir=project_dir,
-            ioc_file=ioc_file,
-            cubemx_cmd=args.cubemx_cmd,
-            java_cmd=args.java_cmd,
-            launch_mode=args.cubemx_launch_mode,
-            generate_code_dir=args.cubemx_generate_code_dir,
-            expect_paths=args.cubemx_expect_path,
-            log_dir=args.cubemx_log_dir,
-            script_path=args.cubemx_script_path,
-            keep_script=args.cubemx_keep_script,
-            silent=args.cubemx_silent,
-            auto_confirm=args.cubemx_auto_confirm,
-            restore_ci_state=args.cubemx_restore_ci_state,
-            ci_state_archive=args.cubemx_ci_state_archive,
-            ci_state_b64_env=args.cubemx_ci_state_b64_env,
-            allow_st_login=args.cubemx_allow_st_login,
-            st_username_env=args.cubemx_st_username_env,
-            st_password_env=args.cubemx_st_password_env,
-            timeout=args.cubemx_timeout,
-        )
 
     create_gitignore_file(project_dir)
 

@@ -5,19 +5,15 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import ctypes
 import logging
-import ntpath
 import os
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 import threading
 import time
-import zipfile
 
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -145,100 +141,20 @@ ACCOUNT_LOGIN_KEYWORDS = (
     "邮箱",
 )
 
-DEFAULT_CI_STATE_ARCHIVE_ENV = "STM32CUBEMX_CI_STATE_ARCHIVE"
-DEFAULT_CI_STATE_B64_ENV = "STM32CUBEMX_CI_STATE_B64"
-DEFAULT_ST_USERNAME_ENV = "STM32CUBEMX_USERNAME"
-DEFAULT_ST_PASSWORD_ENV = "STM32CUBEMX_PASSWORD"
+DEFAULT_EXPECT_PATHS = ("Core/Inc", "Drivers")
 GENERIC_DIALOG_CONFIRM_LIMIT = 2
-
-_X11_SHIFTED_CHARS = {
-    "~": "grave",
-    "!": "1",
-    "@": "2",
-    "#": "3",
-    "$": "4",
-    "%": "5",
-    "^": "6",
-    "&": "7",
-    "*": "8",
-    "(": "9",
-    ")": "0",
-    "_": "minus",
-    "+": "equal",
-    "{": "bracketleft",
-    "}": "bracketright",
-    "|": "backslash",
-    ":": "semicolon",
-    '"': "apostrophe",
-    "<": "comma",
-    ">": "period",
-    "?": "slash",
-}
-
-_X11_UNSHIFTED_CHARS = {
-    " ": "space",
-    "`": "grave",
-    "-": "minus",
-    "=": "equal",
-    "[": "bracketleft",
-    "]": "bracketright",
-    "\\": "backslash",
-    ";": "semicolon",
-    "'": "apostrophe",
-    ",": "comma",
-    ".": "period",
-    "/": "slash",
-}
 
 
 class DialogBlockedError(RuntimeError):
     """Raised when CubeMX shows a dialog that cannot be accepted safely."""
 
 
-@dataclass
-class STLoginCredentials:
-    username: str
-    password: str
-
-
 def _contains_any(text: str, keywords: Sequence[str]) -> bool:
     return any(keyword in text for keyword in keywords)
 
 
-def _get_env_secret(name: str) -> str:
-    return os.environ.get(name, "").strip()
-
-
-def _load_st_credentials(
-    allow_st_login: bool,
-    username_env: str = DEFAULT_ST_USERNAME_ENV,
-    password_env: str = DEFAULT_ST_PASSWORD_ENV,
-) -> Optional[STLoginCredentials]:
-    if not allow_st_login:
-        return None
-
-    username = _get_env_secret(username_env)
-    password = _get_env_secret(password_env)
-    if not username or not password:
-        raise RuntimeError(
-            "--allow-st-login requires both "
-            f"{username_env} and {password_env} environment variables."
-        )
-    return STLoginCredentials(username=username, password=password)
-
-
 def _is_account_login_text(flat_text: str) -> bool:
     return _contains_any(flat_text.lower(), ACCOUNT_LOGIN_KEYWORDS)
-
-
-def _note_login_window_without_credentials(last_seen: Dict[int, float], window_id: int) -> None:
-    now = time.time()
-    if (now - last_seen.get(window_id, 0.0)) >= 30.0:
-        LOGGER.info(
-            "Detected CubeMX ST account/login window but no ST credentials are configured; "
-            "leaving it untouched."
-        )
-        last_seen[window_id] = now
 
 
 def _is_progress_text(flat_text: str) -> bool:
@@ -288,198 +204,6 @@ def _consume_generic_dialog_fallback(confirm_counts: Dict[int, int], window_id: 
         return False
     confirm_counts[window_id] = count + 1
     return True
-
-
-def _default_ci_state_targets() -> Dict[str, str]:
-    home = os.path.expanduser("~")
-    targets = {
-        ".stm32cubemx": os.path.join(home, ".stm32cubemx"),
-        "STM32Cube/Repository": os.path.join(home, "STM32Cube", "Repository"),
-    }
-
-    if os.name == "nt":
-        appdata = os.environ.get("APPDATA", "")
-        local_appdata = os.environ.get("LOCALAPPDATA", "")
-        userprofile = os.environ.get("USERPROFILE", home)
-        if appdata:
-            targets["AppData/Roaming/STM32CubeMX"] = os.path.join(appdata, "STM32CubeMX")
-            targets["STM32CubeMX-roaming"] = os.path.join(appdata, "STM32CubeMX")
-        if local_appdata:
-            targets["AppData/Local/STM32CubeMX"] = os.path.join(local_appdata, "STM32CubeMX")
-            targets["STM32CubeMX-local"] = os.path.join(local_appdata, "STM32CubeMX")
-        targets["STM32Cube/Repository"] = os.path.join(userprofile, "STM32Cube", "Repository")
-
-    return targets
-
-
-def _split_archive_name(name: str) -> List[str]:
-    normalized = name.replace("\\", "/")
-    drive, normalized = ntpath.splitdrive(normalized)
-    normalized = normalized.lstrip("/")
-    parts = []
-    for part in normalized.split("/"):
-        if not part or part == ".":
-            continue
-        if part == "..":
-            raise RuntimeError(f"Refusing unsafe CubeMX CI state archive member: {name}")
-        parts.append(part)
-    if drive:
-        # Archive members must be relative. Drive names are ignored only after
-        # the path has been reduced to a whitelisted suffix.
-        return parts
-    return parts
-
-
-def _resolve_ci_state_member(name: str, targets: Dict[str, str]) -> Optional[str]:
-    parts = _split_archive_name(name)
-    if not parts:
-        return None
-
-    lowered = [part.lower() for part in parts]
-
-    # Accept archives rooted at a home directory as long as they contain one of
-    # the allowed CubeMX state/cache suffixes.
-    suffixes = [
-        ([".stm32cubemx"], ".stm32cubemx"),
-        (["stm32cube", "repository"], "STM32Cube/Repository"),
-        (["appdata", "roaming", "stm32cubemx"], "AppData/Roaming/STM32CubeMX"),
-        (["appdata", "local", "stm32cubemx"], "AppData/Local/STM32CubeMX"),
-        (["stm32cubemx-roaming"], "STM32CubeMX-roaming"),
-        (["stm32cubemx-local"], "STM32CubeMX-local"),
-    ]
-
-    for suffix, target_key in suffixes:
-        if target_key not in targets:
-            continue
-        suffix_len = len(suffix)
-        for start in range(0, len(parts) - suffix_len + 1):
-            if lowered[start:start + suffix_len] == suffix:
-                rel_parts = parts[start + suffix_len:]
-                return os.path.join(targets[target_key], *rel_parts)
-
-    return None
-
-
-def _safe_extract_member(data_stream, target_path: str) -> None:
-    target_path = os.path.abspath(target_path)
-    os.makedirs(os.path.dirname(target_path), exist_ok=True)
-    with open(target_path, "wb") as output:
-        shutil.copyfileobj(data_stream, output)
-
-
-def _restore_ci_state_from_zip(archive_path: str, targets: Dict[str, str]) -> List[str]:
-    restored_targets = set()
-    with zipfile.ZipFile(archive_path) as archive:
-        for info in archive.infolist():
-            target_path = _resolve_ci_state_member(info.filename, targets)
-            if target_path is None:
-                continue
-            if info.is_dir():
-                os.makedirs(target_path, exist_ok=True)
-            else:
-                with archive.open(info, "r") as source:
-                    _safe_extract_member(source, target_path)
-            restored_targets.add(_ci_state_target_label(target_path, targets))
-    return sorted(restored_targets)
-
-
-def _restore_ci_state_from_tar(archive_path: str, targets: Dict[str, str]) -> List[str]:
-    restored_targets = set()
-    with tarfile.open(archive_path) as archive:
-        for member in archive.getmembers():
-            target_path = _resolve_ci_state_member(member.name, targets)
-            if target_path is None:
-                continue
-            if member.isdir():
-                os.makedirs(target_path, exist_ok=True)
-            elif member.isfile():
-                source = archive.extractfile(member)
-                if source is None:
-                    continue
-                with source:
-                    _safe_extract_member(source, target_path)
-            else:
-                continue
-            restored_targets.add(_ci_state_target_label(target_path, targets))
-    return sorted(restored_targets)
-
-
-def _ci_state_target_label(path: str, targets: Dict[str, str]) -> str:
-    abs_path = os.path.abspath(path)
-    candidates = sorted(targets.items(), key=lambda item: len(os.path.abspath(item[1])), reverse=True)
-    for label, target in candidates:
-        abs_target = os.path.abspath(target)
-        if abs_path == abs_target or abs_path.startswith(abs_target + os.sep):
-            return label
-    return abs_path
-
-
-def _archive_kind(path: str) -> str:
-    lowered = path.lower()
-    if lowered.endswith(".zip"):
-        return "zip"
-    if lowered.endswith((".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz")):
-        return "tar"
-    if zipfile.is_zipfile(path):
-        return "zip"
-    if tarfile.is_tarfile(path):
-        return "tar"
-    raise RuntimeError(f"Unsupported CubeMX CI state archive format: {path}")
-
-
-def _write_archive_from_b64_env(env_name: str) -> str:
-    encoded = os.environ.get(env_name, "")
-    if not encoded.strip():
-        raise RuntimeError(f"CubeMX CI state base64 environment variable is empty: {env_name}")
-    handle = tempfile.NamedTemporaryFile(prefix="cubemx_ci_state_", suffix=".archive", delete=False)
-    try:
-        handle.write(base64.b64decode(encoded, validate=True))
-        return handle.name
-    finally:
-        handle.close()
-
-
-def restore_cubemx_ci_state(
-    archive_path: str = "",
-    archive_b64_env: str = DEFAULT_CI_STATE_B64_ENV,
-) -> List[str]:
-    """Restore pre-warmed CubeMX user state and package cache for CI."""
-
-    temp_archive = ""
-    if archive_path:
-        actual_archive = os.path.abspath(os.path.expanduser(os.path.expandvars(archive_path)))
-    else:
-        env_archive = os.environ.get(DEFAULT_CI_STATE_ARCHIVE_ENV, "").strip()
-        if env_archive:
-            actual_archive = os.path.abspath(os.path.expanduser(os.path.expandvars(env_archive)))
-        elif os.environ.get(archive_b64_env, "").strip():
-            temp_archive = _write_archive_from_b64_env(archive_b64_env)
-            actual_archive = temp_archive
-        else:
-            return []
-
-    try:
-        if not os.path.isfile(actual_archive):
-            raise FileNotFoundError(actual_archive)
-        targets = _default_ci_state_targets()
-        kind = _archive_kind(actual_archive)
-        if kind == "zip":
-            restored = _restore_ci_state_from_zip(actual_archive, targets)
-        else:
-            restored = _restore_ci_state_from_tar(actual_archive, targets)
-        if not restored:
-            raise RuntimeError(
-                "CubeMX CI state archive did not contain any supported state/cache paths. "
-                "Expected .stm32cubemx, STM32Cube/Repository, or AppData/.../STM32CubeMX."
-            )
-        LOGGER.info("Restored CubeMX CI state/cache targets: %s", ", ".join(restored))
-        return restored
-    finally:
-        if temp_archive:
-            try:
-                os.remove(temp_archive)
-            except OSError:
-                pass
 
 
 def _friendly_path_name(path: str) -> str:
@@ -587,38 +311,14 @@ def _format_script_path(path: str) -> str:
     return normalized
 
 
-def build_cubemx_script(
-    ioc_path: str,
-    generate_code_dir: str = "",
-    credentials: Optional[STLoginCredentials] = None,
-    redact_secrets: bool = False,
-) -> str:
-    script_lines = []
-    if credentials is not None:
-        username = "<STM32CUBEMX_USERNAME>" if redact_secrets else credentials.username
-        password = "<STM32CUBEMX_PASSWORD>" if redact_secrets else credentials.password
-        script_lines.append(f"login {username} {password} true")
-    script_lines.append(f"config load {_format_script_path(ioc_path)}")
+def build_cubemx_script(ioc_path: str, generate_code_dir: str = "") -> str:
+    script_lines = [f"config load {_format_script_path(ioc_path)}"]
     if generate_code_dir:
         script_lines.append(f"generate code {_format_script_path(generate_code_dir)}")
     else:
         script_lines.append("project generate")
     script_lines.append("exit")
     return "\n".join(script_lines) + "\n"
-
-
-def _redact_text(text: str, secrets: Sequence[str]) -> str:
-    redacted = text
-    for secret in secrets:
-        if secret:
-            redacted = redacted.replace(secret, "<redacted>")
-    return redacted
-
-
-def _redaction_secrets(credentials: Optional[STLoginCredentials]) -> List[str]:
-    if credentials is None:
-        return []
-    return [credentials.username, credentials.password]
 
 
 def _shell_join(args: Sequence[str]) -> str:
@@ -687,34 +387,25 @@ class _WindowsDialogController(_BaseDialogController):
     BM_CLICK = 0x00F5
     BM_GETCHECK = 0x00F0
     BST_CHECKED = 0x0001
-    CF_UNICODETEXT = 13
-    GMEM_MOVEABLE = 0x0002
     KEYEVENTF_KEYUP = 0x0002
     SW_RESTORE = 9
-    VK_CONTROL = 0x11
     VK_TAB = 0x09
     VK_RETURN = 0x0D
     VK_SPACE = 0x20
-    VK_V = 0x56
     WM_KEYDOWN = 0x0100
     WM_KEYUP = 0x0101
 
-    def __init__(self, process_id: int, credentials: Optional[STLoginCredentials] = None):
+    def __init__(self, process_id: int):
         from ctypes import wintypes
 
         self.process_id = process_id
-        self.credentials = credentials
         self.wintypes = wintypes
         self.user32 = ctypes.windll.user32
         self.kernel32 = ctypes.windll.kernel32
         self.kernel32.CreateToolhelp32Snapshot.restype = self.wintypes.HANDLE
         self.kernel32.Process32FirstW.restype = self.wintypes.BOOL
         self.kernel32.Process32NextW.restype = self.wintypes.BOOL
-        self.kernel32.GlobalAlloc.restype = self.wintypes.HGLOBAL
-        self.kernel32.GlobalLock.restype = ctypes.c_void_p
         self._last_action: Dict[int, float] = {}
-        self._login_attempted: Dict[int, float] = {}
-        self._login_seen_without_credentials: Dict[int, float] = {}
         self._generic_confirm_count: Dict[int, int] = {}
 
     def pump_once(self) -> None:
@@ -725,12 +416,6 @@ class _WindowsDialogController(_BaseDialogController):
             child_items = self._child_items(hwnd)
             flat_text = self._flatten_window_text(title, class_name, child_items)
             if _is_account_login_text(flat_text):
-                if self.credentials is None:
-                    _note_login_window_without_credentials(self._login_seen_without_credentials, hwnd)
-                    continue
-                if self._submit_login(hwnd):
-                    self._last_action[hwnd] = time.time()
-                    continue
                 raise DialogBlockedError(_st_login_blocked_message())
             if not self._looks_relevant(flat_text, class_name):
                 continue
@@ -852,11 +537,6 @@ class _WindowsDialogController(_BaseDialogController):
     def _accept_window(self, hwnd: int, class_name: str, child_items: Sequence[Tuple[int, str, str]]) -> bool:
         flat_text = self._flatten_window_text(self._window_text(hwnd), class_name, child_items)
         if _is_account_login_text(flat_text):
-            if self.credentials is None:
-                _note_login_window_without_credentials(self._login_seen_without_credentials, hwnd)
-                return False
-            if self._submit_login(hwnd):
-                return True
             raise DialogBlockedError(_st_login_blocked_message())
         if self._is_progress_window(flat_text, child_items):
             LOGGER.info("Skipping CubeMX progress window to avoid interrupting downloads/extraction")
@@ -894,70 +574,6 @@ class _WindowsDialogController(_BaseDialogController):
         self.user32.keybd_event(virtual_key, 0, self.KEYEVENTF_KEYUP, 0)
         time.sleep(0.08)
 
-    def _tap_chord(self, modifier_key: int, virtual_key: int) -> None:
-        self.user32.keybd_event(modifier_key, 0, 0, 0)
-        time.sleep(0.02)
-        self.user32.keybd_event(virtual_key, 0, 0, 0)
-        time.sleep(0.02)
-        self.user32.keybd_event(virtual_key, 0, self.KEYEVENTF_KEYUP, 0)
-        self.user32.keybd_event(modifier_key, 0, self.KEYEVENTF_KEYUP, 0)
-        time.sleep(0.08)
-
-    def _set_clipboard_text(self, text: str) -> None:
-        if not self.user32.OpenClipboard(None):
-            raise RuntimeError("Unable to open Windows clipboard for CubeMX login automation")
-        try:
-            self.user32.EmptyClipboard()
-            data = (text + "\0").encode("utf-16-le")
-            handle = self.kernel32.GlobalAlloc(self.GMEM_MOVEABLE, len(data))
-            if not handle:
-                raise RuntimeError("Unable to allocate Windows clipboard buffer")
-            pointer = self.kernel32.GlobalLock(handle)
-            if not pointer:
-                raise RuntimeError("Unable to lock Windows clipboard buffer")
-            try:
-                ctypes.memmove(pointer, data, len(data))
-            finally:
-                self.kernel32.GlobalUnlock(handle)
-            if not self.user32.SetClipboardData(self.CF_UNICODETEXT, handle):
-                raise RuntimeError("Unable to set Windows clipboard text")
-        finally:
-            self.user32.CloseClipboard()
-
-    def _clear_clipboard(self) -> None:
-        if not self.user32.OpenClipboard(None):
-            return
-        try:
-            self.user32.EmptyClipboard()
-        finally:
-            self.user32.CloseClipboard()
-
-    def _paste_text(self, text: str) -> None:
-        self._set_clipboard_text(text)
-        self._tap_chord(self.VK_CONTROL, self.VK_V)
-
-    def _submit_login(self, hwnd: int) -> bool:
-        if self.credentials is None:
-            return False
-        if self._acted_recently(hwnd) or (time.time() - self._login_attempted.get(hwnd, 0.0)) < 10.0:
-            return True
-
-        self.user32.ShowWindow(hwnd, self.SW_RESTORE)
-        self.user32.SetForegroundWindow(hwnd)
-        time.sleep(0.2)
-        try:
-            self._tap_chord(self.VK_CONTROL, ord("A"))
-            self._paste_text(self.credentials.username)
-            self._tap_key(self.VK_TAB)
-            self._tap_chord(self.VK_CONTROL, ord("A"))
-            self._paste_text(self.credentials.password)
-            self._tap_key(self.VK_RETURN)
-            LOGGER.info("Submitted ST account credentials to CubeMX login dialog")
-        finally:
-            self._clear_clipboard()
-        self._login_attempted[hwnd] = time.time()
-        return True
-
     def _confirm_awt_dialog(self, hwnd: int) -> None:
         self.user32.ShowWindow(hwnd, self.SW_RESTORE)
         self.user32.SetForegroundWindow(hwnd)
@@ -970,7 +586,7 @@ class _WindowsDialogController(_BaseDialogController):
 
 
 class _LinuxX11DialogController(_BaseDialogController):
-    def __init__(self, process_id: int, credentials: Optional[STLoginCredentials] = None):
+    def __init__(self, process_id: int):
         from Xlib import X, XK, display  # type: ignore
         from Xlib.ext import xtest  # type: ignore
 
@@ -979,7 +595,6 @@ class _LinuxX11DialogController(_BaseDialogController):
         self.display_module = display
         self.xtest = xtest
         self.process_id = process_id
-        self.credentials = credentials
         self.display = display.Display()
         self.root = self.display.screen().root
         self.pid_atom = self.display.intern_atom("_NET_WM_PID")
@@ -987,8 +602,6 @@ class _LinuxX11DialogController(_BaseDialogController):
         self.utf8_atom = self.display.intern_atom("UTF8_STRING")
         self.class_atom = self.display.intern_atom("WM_CLASS")
         self._last_action: Dict[int, float] = {}
-        self._login_attempted: Dict[int, float] = {}
-        self._login_seen_without_credentials: Dict[int, float] = {}
         self._generic_confirm_count: Dict[int, int] = {}
 
     def pump_once(self) -> None:
@@ -1000,12 +613,6 @@ class _LinuxX11DialogController(_BaseDialogController):
             class_name = self._window_class(window)
             flat_text = "\n".join((title, class_name)).lower()
             if _is_account_login_text(flat_text):
-                if self.credentials is None:
-                    _note_login_window_without_credentials(self._login_seen_without_credentials, window.id)
-                    continue
-                if self._submit_login(window):
-                    self._last_action[window.id] = time.time()
-                    continue
                 raise DialogBlockedError(_st_login_blocked_message())
             if not self._looks_relevant(flat_text, class_name):
                 continue
@@ -1206,43 +813,6 @@ class _LinuxX11DialogController(_BaseDialogController):
         self.display.sync()
         time.sleep(0.05)
 
-    def _type_text(self, text: str) -> None:
-        for char in text:
-            if char in _X11_SHIFTED_CHARS:
-                self._tap(_X11_SHIFTED_CHARS[char], shift=True)
-                continue
-            if char in _X11_UNSHIFTED_CHARS:
-                self._tap(_X11_UNSHIFTED_CHARS[char])
-                continue
-            if char.isalpha():
-                self._tap(char.lower(), shift=char.isupper())
-                continue
-            if char.isdigit():
-                self._tap(char)
-                continue
-            raise DialogBlockedError(
-                "CubeMX ST login automation cannot type a character in the configured credentials; "
-                "use a CI state archive instead."
-            )
-
-    def _submit_login(self, window) -> bool:
-        if self.credentials is None:
-            return False
-        if self._acted_recently(window.id) or (time.time() - self._login_attempted.get(window.id, 0.0)) < 10.0:
-            return True
-
-        self._activate_window(window)
-        time.sleep(0.2)
-        self._tap("a", control=True)
-        self._type_text(self.credentials.username)
-        self._tap("Tab")
-        self._tap("a", control=True)
-        self._type_text(self.credentials.password)
-        self._tap("Return")
-        self._login_attempted[window.id] = time.time()
-        LOGGER.info("Submitted ST account credentials to CubeMX login dialog")
-        return True
-
     def _confirm_window(self, window) -> None:
         for key_name, alt in (("Return", False), ("space", False), ("Tab", False), ("Return", False), ("o", True), ("y", True), ("i", True), ("a", True)):
             self._tap(key_name, alt=alt)
@@ -1251,24 +821,21 @@ class _LinuxX11DialogController(_BaseDialogController):
 
 def _st_login_blocked_message() -> str:
     return (
-        "STM32CubeMX requested ST account login. For CI, restore a pre-warmed CubeMX "
-        "state/package archive with --restore-ci-state or STM32CUBEMX_CI_STATE_B64; "
-        "only use --allow-st-login with STM32CUBEMX_USERNAME and STM32CUBEMX_PASSWORD "
-        "as an explicit fallback."
+        "STM32CubeMX requested ST account login. This tool does not automate CubeMX login or state setup; "
+        "open CubeMX on this machine, sign in, install required firmware packages, then run generation again."
     )
 
 
 def create_dialog_controller(
     process_id: int,
-    credentials: Optional[STLoginCredentials] = None,
 ) -> _BaseDialogController:
     if os.name == "nt":
-        return _WindowsDialogController(process_id, credentials=credentials)
+        return _WindowsDialogController(process_id)
     if not os.environ.get("DISPLAY"):
         LOGGER.warning("CubeMX auto-confirm is enabled but DISPLAY is not set; dialog automation is disabled.")
         return _NullDialogController()
     try:
-        return _LinuxX11DialogController(process_id, credentials=credentials)
+        return _LinuxX11DialogController(process_id)
     except ImportError:
         LOGGER.warning(
             "CubeMX auto-confirm on Linux requires python-xlib. Install it or disable --auto-confirm."
@@ -1284,11 +851,10 @@ class _DialogWatchThread(threading.Thread):
         self,
         process_id: int,
         stop_event: threading.Event,
-        credentials: Optional[STLoginCredentials] = None,
         poll_interval: float = 0.5,
     ):
         super().__init__(daemon=True)
-        self.controller = create_dialog_controller(process_id, credentials=credentials)
+        self.controller = create_dialog_controller(process_id)
         self.stop_event = stop_event
         self.poll_interval = poll_interval
         self.error: Optional[BaseException] = None
@@ -1372,12 +938,6 @@ def generate_cubemx_project(
     keep_script: bool = False,
     silent: bool = False,
     auto_confirm: bool = False,
-    restore_ci_state: bool = False,
-    ci_state_archive: str = "",
-    ci_state_b64_env: str = DEFAULT_CI_STATE_B64_ENV,
-    allow_st_login: bool = False,
-    st_username_env: str = DEFAULT_ST_USERNAME_ENV,
-    st_password_env: str = DEFAULT_ST_PASSWORD_ENV,
     timeout: int = 1200,
 ) -> CubeMXRunResult:
     project_dir = os.path.abspath(project_dir)
@@ -1388,38 +948,14 @@ def generate_cubemx_project(
     if not ioc_path:
         raise FileNotFoundError(f"No .ioc file found in {_friendly_path_name(project_dir)}")
 
-    if restore_ci_state or ci_state_archive or os.environ.get(DEFAULT_CI_STATE_ARCHIVE_ENV) or os.environ.get(ci_state_b64_env):
-        restore_cubemx_ci_state(ci_state_archive, archive_b64_env=ci_state_b64_env)
-
-    credentials = _load_st_credentials(
-        allow_st_login,
-        username_env=st_username_env,
-        password_env=st_password_env,
-    )
-    if credentials is not None and (script_path or keep_script):
-        raise RuntimeError(
-            "--allow-st-login writes ST credentials into the CubeMX script; "
-            "do not combine it with --script-path or --keep-script. Use --log-dir for redacted logs."
-        )
-    if credentials is not None and not auto_confirm:
-        LOGGER.info("Enabling CubeMX dialog watcher because ST login automation was explicitly requested")
-        auto_confirm = True
-
     resolved_cubemx_cmd = resolve_cubemx_command(cubemx_cmd)
     actual_script_path, should_cleanup_script = _prepare_script_path(project_dir, script_path, keep_script)
-    script_text = build_cubemx_script(ioc_path, generate_code_dir, credentials=credentials)
-    redacted_script_text = build_cubemx_script(
-        ioc_path,
-        generate_code_dir,
-        credentials=credentials,
-        redact_secrets=True,
-    )
-    redaction_secrets = _redaction_secrets(credentials)
+    script_text = build_cubemx_script(ioc_path, generate_code_dir)
     _write_text_file(actual_script_path, script_text)
 
     if log_dir:
         os.makedirs(log_dir, exist_ok=True)
-        _write_text_file(os.path.join(log_dir, "cubemx_generate.txt"), redacted_script_text)
+        _write_text_file(os.path.join(log_dir, "cubemx_generate.txt"), script_text)
 
     command = build_cubemx_command(
         resolved_cubemx_cmd,
@@ -1443,7 +979,6 @@ def generate_cubemx_project(
     def consume_stream(stream, sink: List[str], handle) -> None:
         try:
             for line in iter(stream.readline, ""):
-                line = _redact_text(line, redaction_secrets)
                 sink.append(line)
                 if handle is not None:
                     handle.write(line)
@@ -1479,7 +1014,7 @@ def generate_cubemx_project(
     stop_event = threading.Event()
     watch_thread = None
     if auto_confirm:
-        watch_thread = _DialogWatchThread(process.pid, stop_event, credentials=credentials)
+        watch_thread = _DialogWatchThread(process.pid, stop_event)
         watch_thread.start()
 
     stdout_thread = threading.Thread(target=consume_stream, args=(process.stdout, stdout_lines, stdout_handle), daemon=True)
@@ -1551,7 +1086,8 @@ def generate_cubemx_project(
             f"{returncode}\nSTDOUT tail:\n{stdout_tail}\nSTDERR tail:\n{stderr_tail}"
         )
 
-    missing_paths = [path for path in _normalize_expect_paths(project_dir, expect_paths or []) if not os.path.exists(path)]
+    effective_expect_paths = DEFAULT_EXPECT_PATHS if expect_paths is None else expect_paths
+    missing_paths = [path for path in _normalize_expect_paths(project_dir, effective_expect_paths) if not os.path.exists(path)]
     if missing_paths:
         raise RuntimeError(
             "STM32CubeMX finished but expected paths are still missing: " + ", ".join(missing_paths)
@@ -1576,18 +1112,17 @@ def main() -> None:
         help="CubeMX launch mode (default: auto, Windows prefers java -jar)",
     )
     parser.add_argument("--generate-code-dir", default="", help="Use 'generate code <dir>' instead of 'project generate'")
-    parser.add_argument("--expect-path", action="append", default=[], help="Path that must exist after generation")
+    parser.add_argument(
+        "--expect-path",
+        action="append",
+        default=None,
+        help="Path that must exist after generation (default: Core/Inc and Drivers)",
+    )
     parser.add_argument("--log-dir", default="", help="Optional directory for command/script/stdout/stderr logs")
     parser.add_argument("--script-path", default="", help="Optional path for the generated CubeMX script file")
     parser.add_argument("--keep-script", action="store_true", help="Keep the generated CubeMX script in the project directory")
     parser.add_argument("--silent", action="store_true", help="Pass -s to STM32CubeMX")
     parser.add_argument("--auto-confirm", action="store_true", help="Attempt to auto-confirm migration/license/download dialogs")
-    parser.add_argument("--restore-ci-state", action="store_true", help="Restore pre-warmed CubeMX CI state/cache before launch")
-    parser.add_argument("--ci-state-archive", default="", help="Path to a tar/zip archive containing pre-warmed CubeMX state/cache")
-    parser.add_argument("--ci-state-b64-env", default=DEFAULT_CI_STATE_B64_ENV, help="Environment variable containing base64-encoded CubeMX state/cache archive")
-    parser.add_argument("--allow-st-login", action="store_true", help="Allow explicit ST account login via environment variables when login dialogs appear")
-    parser.add_argument("--st-username-env", default=DEFAULT_ST_USERNAME_ENV, help="Environment variable containing the ST account username")
-    parser.add_argument("--st-password-env", default=DEFAULT_ST_PASSWORD_ENV, help="Environment variable containing the ST account password")
     parser.add_argument("--timeout", type=int, default=1200, help="CubeMX process timeout in seconds (default: 1200)")
 
     args = parser.parse_args()
@@ -1606,12 +1141,6 @@ def main() -> None:
             keep_script=args.keep_script,
             silent=args.silent,
             auto_confirm=args.auto_confirm,
-            restore_ci_state=args.restore_ci_state,
-            ci_state_archive=args.ci_state_archive,
-            ci_state_b64_env=args.ci_state_b64_env,
-            allow_st_login=args.allow_st_login,
-            st_username_env=args.st_username_env,
-            st_password_env=args.st_password_env,
             timeout=args.timeout,
         )
     except Exception as error:
