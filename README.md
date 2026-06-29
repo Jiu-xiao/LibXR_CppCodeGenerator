@@ -184,19 +184,21 @@ The new `xr_cubemx_generate` entrypoint can be used standalone when you only wan
 xr_cubemx_generate -d . --cubemx-cmd /path/to/STM32CubeMX
 ```
 
-Windows 上推荐显式给出 Java 和 CubeMX 路径 / Windows example:
+Windows 上推荐直接启动 STM32CubeMX.exe / Windows example:
 
 ```powershell
 xr_cubemx_generate -d . `
   --cubemx-cmd "$env:LOCALAPPDATA\Programs\STM32CubeMX\STM32CubeMX.exe" `
-  --java-cmd "$env:LOCALAPPDATA\Programs\STM32CubeMX\jre\bin\java.exe" `
-  --launch-mode java `
-  --cubemx-auto-confirm `
+  --launch-mode direct `
+  --auto-confirm `
   --log-dir .cubemx-logs
 ```
 
-注意：CubeMX 脚本模式仍可能启动 GUI。`--cubemx-auto-confirm` 是对 GUI 弹窗的兜底，不是官方 headless 模式。
-Note: CubeMX script mode may still launch the GUI. `--cubemx-auto-confirm` is a fallback for GUI dialogs, not an official headless mode.
+如果显式传入 STM32CubeMX `.jar`，才使用 `--launch-mode java` 和 `--java-cmd`。
+Use `--launch-mode java` and `--java-cmd` only when `--cubemx-cmd` points to an STM32CubeMX `.jar` file.
+
+注意：CubeMX 脚本模式仍可能启动 GUI。`--auto-confirm` 是对 GUI 弹窗的 best-effort 兜底，不是可靠的官方 headless CI 模式。
+Note: CubeMX script mode may still launch the GUI. `--auto-confirm` is a best-effort fallback for GUI dialogs, not a reliable official headless CI mode.
 
 #### 📦 输出内容 (Outputs)
 

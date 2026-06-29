@@ -8,6 +8,7 @@ import argparse
 import ctypes
 import logging
 import os
+import signal
 import shutil
 import subprocess
 import sys
@@ -302,6 +303,10 @@ def resolve_java_command(cubemx_cmd: str, java_cmd: str = "") -> str:
     )
 
 
+def _is_java_archive(cubemx_cmd: str) -> bool:
+    return os.path.splitext(cubemx_cmd)[1].lower() == ".jar"
+
+
 def _format_script_path(path: str) -> str:
     normalized = os.path.abspath(path)
     if os.name == "nt":
@@ -340,12 +345,27 @@ def build_cubemx_command(
     if launch_mode not in {"auto", "direct", "java"}:
         raise ValueError(f"Unsupported launch mode: {launch_mode}")
 
-    use_java = launch_mode == "java" or (launch_mode == "auto" and os.name == "nt")
+    use_java = launch_mode == "java" or (
+        launch_mode == "auto" and _is_java_archive(cubemx_cmd)
+    )
+
+    if use_java and not _is_java_archive(cubemx_cmd):
+        raise ValueError(
+            "Java launch mode requires an STM32CubeMX .jar path. "
+            "Use --launch-mode direct for STM32CubeMX.exe."
+        )
 
     command: List[str]
     if use_java:
         resolved_java = resolve_java_command(cubemx_cmd, java_cmd)
-        command = [resolved_java, *_java_user_state_options(), "-jar", cubemx_cmd, "-q", script_path]
+        command = [
+            resolved_java,
+            *_java_user_state_options(),
+            "-jar",
+            cubemx_cmd,
+            "-q",
+            script_path,
+        ]
     elif cubemx_cmd.lower().endswith(".py"):
         command = [sys.executable, cubemx_cmd, "-q", script_path]
     else:
@@ -886,6 +906,23 @@ def _terminate_process_tree(process: subprocess.Popen) -> None:
             return
         except Exception:
             pass
+    elif hasattr(os, "killpg"):
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+            process.wait(timeout=3)
+            return
+        except ProcessLookupError:
+            return
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+                return
+            except ProcessLookupError:
+                return
+            except Exception:
+                pass
+        except Exception:
+            pass
     process.kill()
 
 
@@ -989,6 +1026,10 @@ def generate_cubemx_project(
     try:
         # CubeMX path is resolved before this point and arguments are passed as
         # a list with shell disabled, so project paths cannot be shell-expanded.
+        popen_kwargs = {}
+        if os.name != "nt":
+            popen_kwargs["start_new_session"] = True
+
         process = subprocess.Popen(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
             command,
             cwd=project_dir,
@@ -998,6 +1039,7 @@ def generate_cubemx_project(
             errors="replace",
             bufsize=1,
             shell=False,
+            **popen_kwargs,
         )
     except Exception:
         if stdout_handle is not None:
@@ -1109,7 +1151,7 @@ def main() -> None:
         "--launch-mode",
         choices=("auto", "direct", "java"),
         default="auto",
-        help="CubeMX launch mode (default: auto, Windows prefers java -jar)",
+        help="CubeMX launch mode (default: auto; .jar uses java -jar, executables launch directly)",
     )
     parser.add_argument("--generate-code-dir", default="", help="Use 'generate code <dir>' instead of 'project generate'")
     parser.add_argument(
