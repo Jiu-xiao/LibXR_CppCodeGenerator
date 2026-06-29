@@ -107,11 +107,8 @@ def patched_env(**values: str) -> Iterator[None]:
 
 def write_fake_cubemx(tmpdir: Path) -> Path:
     fake = tmpdir / "fake_cubemx.py"
-    fake.write_text(
-        f"#!{sys.executable}\n" + textwrap.dedent(FAKE_CUBEMX).lstrip(),
-        encoding="utf-8",
-        newline="\n",
-    )
+    with fake.open("w", encoding="utf-8", newline="\n") as fake_file:
+        fake_file.write(f"#!{sys.executable}\n" + textwrap.dedent(FAKE_CUBEMX).lstrip())
     if os.name != "nt":
         fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
     return fake
