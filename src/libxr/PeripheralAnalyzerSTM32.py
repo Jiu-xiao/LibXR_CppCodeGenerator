@@ -43,7 +43,8 @@ class ConfigurationManager:
 
     def __init__(self) -> None:
         self.pin_registry: DefaultDict[str, Dict[str, Any]] = defaultdict(dict)
-        self.gpio_pins: DefaultDict[str, Dict[str, Any]] = defaultdict(dict)
+        # Compatibility alias for older callers; pin_registry is the canonical store.
+        self.gpio_pins: DefaultDict[str, Dict[str, Any]] = self.pin_registry
         self.peripherals: DefaultDict[str, DefaultDict[str, Dict]] = defaultdict(
             lambda: defaultdict(dict)
         )
@@ -230,6 +231,18 @@ class PeripheralParser:
         return signal[2:] if signal.startswith("S_") else signal
 
     @staticmethod
+    def _normalize_tim_channel_token(channel: str) -> Optional[str]:
+        """Normalize CubeMX timer channel tokens to CHx / CHxN."""
+        channel = str(channel).strip().upper()
+        match = re.fullmatch(r"TIM_CHANNEL_(\d+)(N?)", channel)
+        if match:
+            return f"CH{match.group(1)}{match.group(2)}"
+        match = re.fullmatch(r"CH(\d+)(N?)", channel)
+        if match:
+            return f"CH{match.group(1)}{match.group(2)}"
+        return None
+
+    @staticmethod
     def _signal_root(signal: str) -> str:
         """Return the peripheral root from a CubeMX signal token.
 
@@ -328,10 +341,8 @@ class TIMParser(PeripheralParser):
                 self._handle_pwm_channel(tim_name, parts, value)
             elif parts[1] == "Channel":
                 # Simplified format like TIM10.Channel → TIM_CHANNEL_1
-                channel_id = value.strip()
-                if re.match(r"^TIM_CHANNEL_\d+$", channel_id):
-                    ch_num = channel_id.split("_")[-1]
-                    ch_name = f"CH{ch_num}"
+                ch_name = self._normalize_tim_channel_token(value)
+                if ch_name:
                     label, is_n = self._get_associated_pin_label(tim_name, ch_name)
                     self.config.peripherals["TIM"][tim_name]["Channels"][ch_name] = {
                         "Label": label,
@@ -371,7 +382,9 @@ class TIMParser(PeripheralParser):
         if not match:
             return
 
-        channel_id = match.group(1)
+        channel_id = self._normalize_tim_channel_token(match.group(1))
+        if not channel_id:
+            return
         is_n = channel_id.endswith("N")
         pin_label, _ = self._get_associated_pin_label(tim_name, channel_id)
 
@@ -387,7 +400,9 @@ class TIMParser(PeripheralParser):
         Retrieve GPIO label and whether it's a complementary (N) output.
         Return: (label, is_complementary)
         """
-        normalized_channel = channel_id.upper()
+        normalized_channel = self._normalize_tim_channel_token(channel_id)
+        if not normalized_channel:
+            return timer_name, False
         signal_candidates = {f"{timer_name}_{normalized_channel}"}
         if normalized_channel == 'CH1':
             signal_candidates.add(f"{timer_name}_CH1_ETR")
