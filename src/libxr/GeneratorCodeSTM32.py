@@ -89,6 +89,13 @@ def _register_device(name: str, dev_type: str):
             "type": dev_type,
             "aliases": [name]
         }
+        return
+
+    meta = device_aliases[name]
+    meta["type"] = dev_type
+    aliases = meta.setdefault("aliases", [])
+    if name not in aliases:
+        aliases.append(name)
 
 
 # --------------------------
@@ -282,6 +289,43 @@ def generate_gpio_alias(port: str, gpio_data: dict, project_data: dict) -> str:
     _register_device(var_name, "GPIO")
 
     return f"{var_name}({port_define}, {pin_define}{irq_str})"
+
+
+def _merge_pin_derived_gpio_aliases() -> None:
+    """Attach stale pin-derived GPIO aliases to the currently generated pin object.
+
+    Older ``libxr_config.yaml`` files may retain aliases such as
+    ``PC14_OSC32_IN`` from CubeMX pin tokens. When the current IOC has no
+    ``GPIO_Label`` for that pin, the generator creates the C++ object as the
+    physical pin name, for example ``PC14``. In that case the old name should
+    remain a hardware alias, not a separate C++ variable reference.
+    """
+    for dev, meta in list(device_aliases.items()):
+        if meta.get("type") != "GPIO":
+            continue
+
+        candidates = [dev]
+        candidates.extend(meta.get("aliases", []))
+        target = None
+        for candidate in candidates:
+            match = re.match(r"^(P[A-K]\d+)(?:_|$)", str(candidate))
+            if match:
+                pin_name = match.group(1)
+                pin_meta = device_aliases.get(pin_name)
+                if pin_meta and pin_meta.get("type") == "GPIO":
+                    target = pin_name
+                    break
+
+        if target is None or target == dev:
+            continue
+
+        target_meta = device_aliases[target]
+        aliases = set(target_meta.get("aliases", []))
+        aliases.add(target)
+        aliases.add(dev)
+        aliases.update(meta.get("aliases", []))
+        target_meta["aliases"] = sorted(aliases)
+        del device_aliases[dev]
 
 
 def _get_exti_irq(pin_num: int, port: str, is_exti: bool, mcu_family: str) -> str:
@@ -1051,6 +1095,8 @@ def generate_xrobot_hardware_container() -> str:
     Each device is associated with its logical aliases.
     """
     global device_aliases
+
+    _merge_pin_derived_gpio_aliases()
 
     # Normalize device_aliases structure
     libxr_settings["device_aliases"] = {
