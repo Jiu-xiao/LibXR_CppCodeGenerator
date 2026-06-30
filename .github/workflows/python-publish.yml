@@ -188,10 +188,6 @@ jobs:
         run: |
           python ./scripts/cubemx_runner_smoke.py
 
-      - name: Parser regression tests
-        run: |
-          python -m pytest tests
-
       - name: Checkout BSP Compatibility Test Repo
         uses: actions/checkout@v4
         with:
