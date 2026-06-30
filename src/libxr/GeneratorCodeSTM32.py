@@ -41,6 +41,48 @@ libxr_settings = {
 # --------------------------
 # Configuration Initialization
 # --------------------------
+def _normalize_alias_list(aliases) -> list:
+    if aliases is None:
+        return []
+    if isinstance(aliases, (list, tuple, set)):
+        return [str(alias) for alias in aliases if alias is not None]
+    return [str(aliases)]
+
+
+def _normalize_device_alias_entry(dev: str, entry) -> dict:
+    if isinstance(entry, dict):
+        dev_type = entry.get("type", "Unknown") or "Unknown"
+        aliases = _normalize_alias_list(entry.get("aliases", []))
+    elif isinstance(entry, (list, tuple, set, str)):
+        dev_type = "Unknown"
+        aliases = _normalize_alias_list(entry)
+    else:
+        logging.warning(f"Ignoring invalid device alias entry for '{dev}'")
+        return None
+
+    return {
+        "type": str(dev_type),
+        "aliases": aliases,
+    }
+
+
+def _normalize_device_aliases(raw_aliases) -> dict:
+    if raw_aliases is None:
+        return {}
+    if not isinstance(raw_aliases, dict):
+        logging.warning("Ignoring invalid device_aliases config, expected a mapping")
+        return {}
+
+    normalized = {}
+    for dev, entry in raw_aliases.items():
+        dev_name = str(dev)
+        meta = _normalize_device_alias_entry(dev_name, entry)
+        if meta is not None:
+            normalized[dev_name] = meta
+
+    return normalized
+
+
 def initialize_device_aliases(use_xrobot: bool) -> None:
     global device_aliases
     device_aliases.clear()
@@ -48,7 +90,7 @@ def initialize_device_aliases(use_xrobot: bool) -> None:
     if not use_xrobot:
         return
 
-    saved_aliases = libxr_settings.get("device_aliases", {})
+    saved_aliases = _normalize_device_aliases(libxr_settings.get("device_aliases", {}))
 
     # 插入默认设备
     if "power_manager" not in saved_aliases:
@@ -93,7 +135,10 @@ def _register_device(name: str, dev_type: str):
         }
         return
 
-    meta = device_aliases[name]
+    meta = _normalize_device_alias_entry(name, device_aliases[name])
+    if meta is None:
+        meta = {"type": dev_type, "aliases": [name]}
+    device_aliases[name] = meta
     meta["type"] = dev_type
     aliases = meta.setdefault("aliases", [])
     if name not in aliases:
@@ -136,27 +181,9 @@ def load_configuration(file_path: str, use_hw_cntr: bool) -> dict:
 
             if use_hw_cntr:
                 if 'device_aliases' in config:
-                    new_aliases = {}
-                    for dev, entry in config['device_aliases'].items():
-                        if isinstance(entry, list):
-                            new_aliases[dev] = {
-                                "type": "Unknown",
-                                "aliases": entry
-                            }
-                        elif isinstance(entry, str):
-                            new_aliases[dev] = {
-                                "type": "Unknown",
-                                "aliases": [entry]
-                            }
-                        elif isinstance(entry, dict):
-                            # 兼容新版格式（已带 type 和 aliases）
-                            new_aliases[dev] = {
-                                "type": entry.get("type", "Unknown"),
-                                "aliases": entry.get("aliases", [])
-                                if isinstance(entry.get("aliases"), list)
-                                else [entry.get("aliases")]
-                            }
-                    libxr_settings['device_aliases'] = new_aliases
+                    libxr_settings['device_aliases'] = _normalize_device_aliases(
+                        config['device_aliases']
+                    )
 
             # Basic schema validation
             required_sections = ["Mcu", "GPIO", "Peripherals"]
@@ -302,19 +329,22 @@ def _merge_pin_derived_gpio_aliases() -> None:
     physical pin name, for example ``PC14``. In that case the old name should
     remain a hardware alias, not a separate C++ variable reference.
     """
+    global device_aliases
+    device_aliases = _normalize_device_aliases(device_aliases)
+
     for dev, meta in list(device_aliases.items()):
-        if meta.get("type") != "GPIO":
+        if meta.get("type") not in ("GPIO", "Unknown"):
             continue
 
         candidates = [dev]
-        candidates.extend(meta.get("aliases", []))
+        candidates.extend(_normalize_alias_list(meta.get("aliases", [])))
         target = None
         for candidate in candidates:
             match = PIN_DERIVED_GPIO_ALIAS_RE.match(str(candidate))
             if match:
                 pin_name = match.group(1)
                 pin_meta = device_aliases.get(pin_name)
-                if pin_meta and pin_meta.get("type") == "GPIO":
+                if isinstance(pin_meta, dict) and pin_meta.get("type") == "GPIO":
                     target = pin_name
                     break
 
@@ -322,10 +352,10 @@ def _merge_pin_derived_gpio_aliases() -> None:
             continue
 
         target_meta = device_aliases[target]
-        aliases = set(target_meta.get("aliases", []))
+        aliases = set(_normalize_alias_list(target_meta.get("aliases", [])))
         aliases.add(target)
         aliases.add(dev)
-        aliases.update(meta.get("aliases", []))
+        aliases.update(_normalize_alias_list(meta.get("aliases", [])))
         target_meta["aliases"] = sorted(aliases)
         del device_aliases[dev]
 

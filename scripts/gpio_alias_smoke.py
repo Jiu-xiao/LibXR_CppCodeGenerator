@@ -6,6 +6,7 @@ from __future__ import annotations
 import re
 import sys
 import tempfile
+from importlib import import_module, reload
 from pathlib import Path
 
 import yaml
@@ -19,10 +20,23 @@ STALE_PC14_ENTRY_RE = re.compile(
 )
 
 
-def run_stm32_generator(repo_root: Path, config_path: Path, output_path: Path) -> int:
-    sys.path.insert(0, str(repo_root / "src"))
+LEGACY_ALIAS_CASES = {
+    "typed-dict": {
+        "type": "GPIO",
+        "aliases": ["PC14_OSC32_IN"],
+    },
+    "legacy-list": ["PC14_OSC32_IN"],
+    "legacy-string": "PC14_OSC32_IN",
+}
 
-    from libxr import GeneratorCodeSTM32  # pylint: disable=import-outside-toplevel
+
+def run_stm32_generator(repo_root: Path, config_path: Path, output_path: Path) -> int:
+    src_path = str(repo_root / "src")
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+
+    generator = import_module("libxr.GeneratorCodeSTM32")
+    generator = reload(generator)
 
     old_argv = sys.argv[:]
     sys.argv = [
@@ -36,7 +50,7 @@ def run_stm32_generator(repo_root: Path, config_path: Path, output_path: Path) -
     ]
     try:
         try:
-            GeneratorCodeSTM32.main()
+            generator.main()
         except SystemExit as exit_status:
             return exit_status.code if isinstance(exit_status.code, int) else 1
     finally:
@@ -47,6 +61,16 @@ def run_stm32_generator(repo_root: Path, config_path: Path, output_path: Path) -
 
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
+    for case_name, alias_entry in LEGACY_ALIAS_CASES.items():
+        result = run_alias_case(repo_root, case_name, alias_entry)
+        if result != 0:
+            return result
+
+    print("GPIO alias smoke passed.")
+    return 0
+
+
+def run_alias_case(repo_root: Path, case_name: str, alias_entry) -> int:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
         config_path = tmp_dir / "config.yaml"
@@ -58,15 +82,18 @@ def main() -> int:
             "Timebase": {"Source": "SysTick"},
             "GPIO": {"PC14": {"Signal": "GPIO_Output"}},
             "Peripherals": {},
-            "device_aliases": {
-                "PC14_OSC32_IN": {
-                    "type": "GPIO",
-                    "aliases": ["PC14_OSC32_IN"],
-                }
-            },
         }
         config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
-        libxr_config_path.write_text("SYSTEM: None\n", encoding="utf-8")
+        libxr_config = {
+            "SYSTEM": "None",
+            "device_aliases": {
+                "PC14_OSC32_IN": alias_entry,
+            },
+        }
+        libxr_config_path.write_text(
+            yaml.safe_dump(libxr_config, sort_keys=False),
+            encoding="utf-8",
+        )
 
         result = run_stm32_generator(repo_root, config_path, output_path)
         if result != 0:
@@ -76,23 +103,25 @@ def main() -> int:
         entry = GPIO_PC14_ENTRY_RE.search(generated)
 
         if entry is None:
-            print("missing merged PC14 alias entry")
+            print(f"{case_name}: missing merged PC14 alias entry")
             print(generated)
             return 1
 
         aliases = set(re.findall(r'"([^"]+)"', entry.group("aliases")))
         expected_aliases = {"PC14", "PC14_OSC32_IN"}
         if not expected_aliases.issubset(aliases):
-            print(f"PC14 alias entry missing aliases: {sorted(expected_aliases - aliases)}")
+            print(
+                f"{case_name}: PC14 alias entry missing aliases: "
+                f"{sorted(expected_aliases - aliases)}"
+            )
             print(generated)
             return 1
 
         if STALE_PC14_ENTRY_RE.search(generated):
-            print("stale PC14_OSC32_IN variable entry was generated")
+            print(f"{case_name}: stale PC14_OSC32_IN variable entry was generated")
             print(generated)
             return 1
 
-    print("GPIO alias smoke passed.")
     return 0
 
 
