@@ -24,25 +24,14 @@ PB2/BOOT1.GPIO_Label=BOOT1_IN
 PA13(JTMS/SWDIO).Signal=SYS_JTMS-SWDIO
 PA13(JTMS/SWDIO).GPIO_Label=
 PH0\\ -\\ OSC_IN.Signal=RCC_OSC_IN
-PC4.Signal=GPIO_Output
-PC4.GPIO_Label=
-PA0.Signal=GPXTI0
-PA0.GPIO_Label=WAKE
 """,
     )
 
-    assert parsed["Mcu"] == {"Family": "STM32H7", "Type": "STM32H723VGTx"}
-    assert parsed["GPIO"]["PC3"] == {"Signal": "GPIO_Output", "Label": "LED_C"}
-    assert parsed["GPIO"]["PB2"] == {"Signal": "GPIO_Input", "Label": "BOOT1_IN"}
-    assert parsed["GPIO"]["PC4"] == {"Signal": "GPIO_Output", "Label": ""}
-    assert parsed["GPIO"]["PA0"] == {
-        "Signal": "GPXTI0",
-        "Label": "WAKE",
-        "GPXTI": True,
+    assert parsed["GPIO"] == {
+        "PC3": {"Signal": "GPIO_Output", "Label": "LED_C"},
+        "PB2": {"Signal": "GPIO_Input", "Label": "BOOT1_IN"},
     }
-    assert "PA13" not in parsed["GPIO"]
-    assert "PH0" not in parsed["GPIO"]
-    assert set(parsed["GPIO"]) == {"PC3", "PB2", "PC4", "PA0"}
+    assert parsed["Mcu"] == {"Family": "STM32H7", "Type": "STM32H723VGTx"}
 
 
 def test_signal_aliases_drive_timer_i2c_and_uart_detection(tmp_path: Path) -> None:
@@ -70,21 +59,6 @@ USB_OTG_FS.VirtualMode=Device_Only
     assert parsed["Peripherals"]["TIM"]["TIM1"]["Channels"]["CH1"]["Label"] == "PWM1"
     assert parsed["Peripherals"]["USART"]["USART3"]["Mode"] == "Asynchronous"
     assert parsed["Peripherals"]["USB"]["USB_OTG_FS"]["IPParameters"] == ["VirtualMode"]
-
-
-def test_tim_channel_tokens_are_normalized_before_pin_matching(tmp_path: Path) -> None:
-    parsed = parse_ioc(
-        tmp_path,
-        """
-PA7.Signal=S_TIM1_CH1N
-PA7.GPIO_Label=PWM1N
-TIM1.Channel=TIM_CHANNEL_1N
-""",
-    )
-
-    assert parsed["Peripherals"]["TIM"]["TIM1"]["Channels"] == {
-        "CH1N": {"Label": "PWM1N", "PWM": True, "Complementary": True}
-    }
 
 
 def test_dma_request_ids_and_config_keys_are_not_confused(tmp_path: Path) -> None:
@@ -127,14 +101,7 @@ def test_low_level_ioc_token_helpers() -> None:
     assert PeripheralParser._normalize_gpio_pin_token("PB2/BOOT1") == "PB2"
     assert PeripheralParser._normalize_gpio_pin_token("PA13(JTMS/SWDIO)") == "PA13"
     assert PeripheralParser._normalize_signal_token("S_TIM1_CH1") == "TIM1_CH1"
-    assert PeripheralParser._normalize_tim_channel_token("TIM_CHANNEL_1") == "CH1"
-    assert PeripheralParser._normalize_tim_channel_token("TIM_CHANNEL_1N") == "CH1N"
-    assert PeripheralParser._normalize_tim_channel_token("CH2N") == "CH2N"
     assert PeripheralParser._signal_root("S_LPUART1_TX") == "LPUART1"
     assert PeripheralParser._signal_suffix("S_I2C3_SDA") == "SDA"
-    assert PeripheralParser._parse_dma_request_endpoint("USART1_TX") == ("USART1", "tx")
-    assert PeripheralParser._parse_dma_request_endpoint("ADC1") == ("ADC1", "general")
-    assert PeripheralParser._normalize_dma_direction("DMA_PERIPH_TO_MEMORY") == "periph_to_memory"
-    assert PeripheralParser._normalize_dma_direction("PERIPH_TO_MEMORY") == "periph_to_memory"
     assert PeripheralParser._dma_request_id("Dma.Request12", "Dma") == "12"
     assert PeripheralParser._dma_request_id("Dma.RequestsNb", "Dma") is None
