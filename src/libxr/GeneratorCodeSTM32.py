@@ -11,6 +11,8 @@ import yaml
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
+PIN_DERIVED_GPIO_ALIAS_RE = re.compile(r"^(P[A-K]\d+)(?:_|$)")
+
 # --------------------------
 # Global Configuration
 # --------------------------
@@ -308,7 +310,7 @@ def _merge_pin_derived_gpio_aliases() -> None:
         candidates.extend(meta.get("aliases", []))
         target = None
         for candidate in candidates:
-            match = re.match(r"^(P[A-K]\d+)(?:_|$)", str(candidate))
+            match = PIN_DERIVED_GPIO_ALIAS_RE.match(str(candidate))
             if match:
                 pin_name = match.group(1)
                 pin_meta = device_aliases.get(pin_name)

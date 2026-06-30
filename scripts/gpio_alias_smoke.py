@@ -3,12 +3,46 @@
 
 from __future__ import annotations
 
-import subprocess
+import re
 import sys
 import tempfile
 from pathlib import Path
 
 import yaml
+
+
+GPIO_PC14_ENTRY_RE = re.compile(
+    r"LibXR::Entry<LibXR::GPIO>\(\{\s*PC14\s*,\s*\{(?P<aliases>[^}]*)\}\s*\}\)"
+)
+STALE_PC14_ENTRY_RE = re.compile(
+    r"LibXR::Entry<LibXR::GPIO>\(\{\s*PC14_OSC32_IN\b"
+)
+
+
+def run_stm32_generator(repo_root: Path, config_path: Path, output_path: Path) -> int:
+    sys.path.insert(0, str(repo_root / "src"))
+
+    from libxr import GeneratorCodeSTM32  # pylint: disable=import-outside-toplevel
+
+    old_argv = sys.argv[:]
+    sys.argv = [
+        "libxr.GeneratorCodeSTM32",
+        "-i",
+        str(config_path),
+        "-o",
+        str(output_path),
+        "--xrobot",
+        "--hw-cntr",
+    ]
+    try:
+        try:
+            GeneratorCodeSTM32.main()
+        except SystemExit as exit_status:
+            return exit_status.code if isinstance(exit_status.code, int) else 1
+    finally:
+        sys.argv = old_argv
+
+    return 0
 
 
 def main() -> int:
@@ -34,38 +68,26 @@ def main() -> int:
         config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
         libxr_config_path.write_text("SYSTEM: None\n", encoding="utf-8")
 
-        command = [
-            sys.executable,
-            "-m",
-            "libxr.GeneratorCodeSTM32",
-            "-i",
-            str(config_path),
-            "-o",
-            str(output_path),
-            "--xrobot",
-            "--hw-cntr",
-        ]
-        result = subprocess.run(
-            command,
-            cwd=repo_root,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
-        if result.returncode != 0:
-            print(result.stdout)
-            return result.returncode
+        result = run_stm32_generator(repo_root, config_path, output_path)
+        if result != 0:
+            return result
 
         generated = output_path.read_text(encoding="utf-8")
-        required = 'LibXR::Entry<LibXR::GPIO>({PC14, {"PC14", "PC14_OSC32_IN"}})'
-        forbidden = "LibXR::Entry<LibXR::GPIO>({PC14_OSC32_IN"
+        entry = GPIO_PC14_ENTRY_RE.search(generated)
 
-        if required not in generated:
+        if entry is None:
             print("missing merged PC14 alias entry")
             print(generated)
             return 1
-        if forbidden in generated:
+
+        aliases = set(re.findall(r'"([^"]+)"', entry.group("aliases")))
+        expected_aliases = {"PC14", "PC14_OSC32_IN"}
+        if not expected_aliases.issubset(aliases):
+            print(f"PC14 alias entry missing aliases: {sorted(expected_aliases - aliases)}")
+            print(generated)
+            return 1
+
+        if STALE_PC14_ENTRY_RE.search(generated):
             print("stale PC14_OSC32_IN variable entry was generated")
             print(generated)
             return 1
