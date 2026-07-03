@@ -837,8 +837,14 @@ class PeripheralFactory:
             "LibXR::USB::DescriptorStrings::Language::EN_US, "
             f"\"{manufacturer}\", \"{product}\", \"{serial}\");"
         )
-        # CDC construction with queue size
-        code.append(f"  LibXR::USB::CDCUart {cdc_var}({cdc_rx_fifo_size}, {cdc_tx_fifo_size}, {cdc_queue_size});\n")
+        # CDC construction with explicit endpoint numbers.
+        # Fixed EP layout: EP1 = CDC data bulk IN/OUT, EP2 = CDC notification IN.
+        code.append(
+            f"  LibXR::USB::CDCUart {cdc_var}("
+            "LibXR::USB::Endpoint::EPNumber::EP1, "
+            "LibXR::USB::Endpoint::EPNumber::EP1, "
+            "LibXR::USB::Endpoint::EPNumber::EP2, "
+            f"{cdc_rx_fifo_size}, {cdc_tx_fifo_size}, {cdc_queue_size});\n")
 
         if is_otg:
             code.append(f"  {instance_type} {obj}(")
