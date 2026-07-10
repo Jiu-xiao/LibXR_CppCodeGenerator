@@ -188,6 +188,10 @@ jobs:
         run: |
           python ./scripts/cubemx_runner_smoke.py
 
+      - name: LibXR submodule policy smoke check
+        run: |
+          python ./scripts/libxr_submodule_smoke.py
+
       - name: Checkout BSP Compatibility Test Repo
         uses: actions/checkout@v4
         with:

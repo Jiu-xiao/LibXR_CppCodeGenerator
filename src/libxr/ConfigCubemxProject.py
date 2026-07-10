@@ -164,20 +164,6 @@ def get_git_head(path):
     return result.stdout.strip()
 
 
-def get_submodule_gitlink(project_dir, rel_path):
-    result = subprocess.run(
-        ["git", "-C", project_dir, "ls-tree", "HEAD", "--", rel_path],
-        capture_output=True,
-        text=True
-    )
-    if result.returncode != 0:
-        return ""
-    parts = result.stdout.strip().split()
-    if len(parts) >= 3 and parts[0] == "160000" and parts[1] == "commit":
-        return parts[2]
-    return ""
-
-
 def is_commit_ancestor(repo_path, older_commit, newer_commit):
     if not older_commit or not newer_commit:
         return False
@@ -309,7 +295,6 @@ def add_libxr(project_dir, libxr_commit=None, git_base="https://github.com",
     if os.path.exists(libxr_path):
         logging.info("LibXR submodule path exists.")
         current_commit = get_git_head(libxr_path)
-        project_commit = get_submodule_gitlink(project_dir, sub_rel_path_posix)
         dirty = not is_git_clean(libxr_path)
         fetched = False
         target_commit = ""
@@ -322,21 +307,17 @@ def add_libxr(project_dir, libxr_commit=None, git_base="https://github.com",
             logging.info(f"Initializing new LibXR submodule to default commit {target_commit}")
         elif dirty:
             logging.warning("LibXR submodule has local changes; keeping current checkout.")
-        elif (project_commit and default_libxr_commit and project_commit != default_libxr_commit
-              and current_commit in (project_commit, default_libxr_commit)):
+        elif default_libxr_commit and current_commit != default_libxr_commit:
             run_command(["git", "-C", libxr_path, "fetch", "origin"], ignore_error=True)
             fetched = True
 
-            if current_commit == project_commit and is_commit_ancestor(
-                libxr_path, project_commit, default_libxr_commit
-            ):
+            if is_commit_ancestor(libxr_path, current_commit, default_libxr_commit):
                 target_commit = default_libxr_commit
-                logging.info(f"Updating LibXR from older project commit to default {target_commit}")
-            elif current_commit == default_libxr_commit and not is_commit_ancestor(
-                libxr_path, project_commit, default_libxr_commit
-            ):
-                target_commit = project_commit
-                logging.info(f"Restoring LibXR to project submodule commit {target_commit}")
+                logging.info(f"Updating clean LibXR checkout to package default {target_commit}")
+            elif is_commit_ancestor(libxr_path, default_libxr_commit, current_commit):
+                logging.info("LibXR checkout is newer than the package default; keeping it.")
+            else:
+                logging.info("LibXR checkout has diverged from the package default; keeping it.")
 
         if target_commit:
             if not fetched:

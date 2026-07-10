@@ -131,14 +131,13 @@ Parses `.ioc`, generates YAML and C++ code, patches interrupt handlers, and init
   显式指定 LibXR 仓库 commit 版本；提供该参数时工具会切到这个 commit。
   Explicitly select the LibXR repository commit; when provided, the tool checks out this commit.
 
-  不提供 `--commit` 时，工具优先保留工程已有的 LibXR 子模块版本。新 clone 工程会按工程记录的
-  submodule gitlink 初始化；如果该 gitlink 已经落后于包内默认 commit，当前 checkout 仍停在该 gitlink，
-  且子模块没有本地修改，工具会升级到包内默认 commit。已有子模块如果被用户切到非默认版本，不会被包内默认 commit 覆盖。
-  When `--commit` is omitted, the existing project LibXR submodule version is preserved. A freshly cloned
-  project follows its recorded submodule gitlink; if that gitlink is older than the package default commit,
-  the current checkout still stays at that gitlink, and the submodule is clean, the tool upgrades it to the
-  package default. An existing submodule manually moved away from the package default will not be overwritten
-  by code generation.
+  不提供 `--commit` 时，如果 LibXR checkout 干净且比包内默认 commit 旧，工具会将其升级到默认 commit；
+  即使工程 gitlink 已记录默认 commit、实际 checkout 仍停在旧版本，也会自动修正。checkout 已是默认版本、
+  比默认版本新、与默认版本分叉或包含本地修改时均保持不变。如需精确切换版本，请显式使用 `--commit`。
+  When `--commit` is omitted, a clean LibXR checkout older than the package default commit is upgraded to that
+  default, even if the project gitlink already records the default while the checkout itself is stale. A
+  checkout that is already current, newer than the package default, has diverged from it, or contains local
+  changes is preserved. Use `--commit` to request an exact revision explicitly.
 
 - `--git-source`
 
